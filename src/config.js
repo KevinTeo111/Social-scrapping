@@ -99,9 +99,9 @@ export const config = {
 
   /** Scrape pacing — deliberately gentle, this is one user's own account. */
   detailConcurrency: num(process.env.DETAIL_CONCURRENCY, 2),
-  detailBudget: num(process.env.DETAIL_BUDGET, 40),
+  detailBudget: num(process.env.DETAIL_BUDGET, 100),
   /** Project Insights pages per run — these supply the "in contact" counts. */
-  insightBudget: num(process.env.INSIGHT_BUDGET, 25),
+  insightBudget: num(process.env.INSIGHT_BUDGET, 60),
   minDelayMs: num(process.env.MIN_DELAY_MS, 1200),
   maxDelayMs: num(process.env.MAX_DELAY_MS, 2600),
   navTimeoutMs: num(process.env.NAV_TIMEOUT_MS, 60000),
