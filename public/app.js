@@ -947,6 +947,33 @@ $('#refreshBtn').onclick = async () => {
   }
 };
 
+/**
+ * A fresh instance starts empty and the periodic refresh only sweeps the first
+ * few pages, so it would take many cycles to reach the whole catalogue. This
+ * walks the category to the end in one run — the same thing `start.ps1 scrape`
+ * does locally, which is otherwise unavailable on a hosted deployment.
+ */
+$('#fullCrawlBtn').onclick = async () => {
+  const proceed = confirm(
+    'Walk the entire category to the end?\n\n' +
+      'This takes several minutes and paces itself deliberately to avoid being ' +
+      'rate-limited. You can keep using the board while it runs.',
+  );
+  if (!proceed) return;
+
+  const btn = $('#fullCrawlBtn');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/scrape', { method: 'POST', body: JSON.stringify({ pages: 250 }) });
+    toast(r.queued ? `Full crawl queued behind ${r.queued} run(s)` : 'Full crawl started — this takes a while');
+  } catch (ex) {
+    toast(ex.message);
+    if (/session/i.test(ex.message)) openAccount();
+  } finally {
+    setTimeout(() => (btn.disabled = false), 8000);
+  }
+};
+
 $('#statsBtn').onclick = showStats;
 $('#statsBackdrop').onclick = (e) => { if (e.target.id === 'statsBackdrop') $('#statsBackdrop').hidden = true; };
 $('#backdrop').onclick = closeDrawer;
