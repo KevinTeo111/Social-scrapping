@@ -1,0 +1,50 @@
+# Name-based virtual host for the Workana board.
+#
+# Caddy is used here because it obtains and renews TLS certificates by itself,
+# which matters more than usual for this app: members' sessions are cookies that
+# can drive their live Workana logins, so they must not travel over plain HTTP.
+#
+#   caddy run --config deploy/Caddyfile
+#
+# Then start the app bound to loopback only — Caddy is the sole public entrance:
+#
+#   $env:HOST='127.0.0.1'
+#   $env:TRUST_PROXY='1'
+#   $env:ALLOWED_HOSTS='jobs.example.com'
+#   $env:APP_SECRET='<a long random string you keep>'
+#   .\start.ps1
+
+# ------------------------------------------------------------------------
+# A. Public domain you control — automatic Let's Encrypt certificate.
+#    Requires ports 80/443 reachable from the internet and DNS pointing here.
+# ------------------------------------------------------------------------
+jobs.example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:4300 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
+# ------------------------------------------------------------------------
+# B. LAN-only name — Caddy issues a certificate from its own local CA.
+#    Each developer must trust that CA once, or their browser will warn.
+#    The CA root is printed by: caddy trust
+# ------------------------------------------------------------------------
+# jobs.internal {
+# 	tls internal
+# 	encode zstd gzip
+# 	reverse_proxy 127.0.0.1:4300 {
+# 		header_up X-Forwarded-Proto {scheme}
+# 	}
+# }
+
+# ------------------------------------------------------------------------
+# C. Several apps sharing one host, separated by name. This is the part that
+#    makes virtual domains worth the setup: each app keeps its own hostname
+#    and certificate while all of them answer on 443.
+# ------------------------------------------------------------------------
+# metrics.internal {
+# 	tls internal
+# 	reverse_proxy 127.0.0.1:9090
+# }

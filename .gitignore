@@ -1,0 +1,13 @@
+# Local toolchain and build output
+node_modules/
+.tools/
+*.log
+
+# Runtime state: the SQLite corpus, the key that decrypts stored Workana
+# sessions, and each member's earned Cloudflare clearance. Never publish.
+data/
+secret.key
+
+# A cookie export is a live login to a Workana account.
+Hiyashi.json
+*cookies*.json

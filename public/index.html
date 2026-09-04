@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workana Jobs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💼</text></svg>">
+</head>
+<body>
+
+<!-- ------------------------------------------------------------------ -->
+<!-- Sign in / register gate                                             -->
+<!-- ------------------------------------------------------------------ -->
+<div class="gate" id="gate" hidden>
+  <div class="gate-card">
+    <div class="gate-brand"><span class="brand-icon">💼</span><h1>Workana Jobs</h1></div>
+    <p class="gate-sub" id="gateSub">Sign in to your account</p>
+
+    <form id="authForm" autocomplete="on">
+      <label class="gate-field" id="nameField" hidden>
+        <span>Name</span>
+        <input type="text" id="authName" autocomplete="name" placeholder="How should we call you?">
+      </label>
+      <label class="gate-field">
+        <span>Email</span>
+        <input type="email" id="authEmail" autocomplete="username" required>
+      </label>
+      <label class="gate-field">
+        <span>Password</span>
+        <input type="password" id="authPassword" autocomplete="current-password" required minlength="8">
+      </label>
+      <label class="gate-field" id="codeField" hidden>
+        <span>Invite code</span>
+        <input type="text" id="authCode" autocomplete="off">
+      </label>
+
+      <p class="gate-error" id="gateError" hidden></p>
+      <button class="btn btn-primary gate-submit" id="gateSubmit" type="submit">Sign in</button>
+    </form>
+
+    <p class="gate-switch">
+      <span id="gateSwitchText">New here?</span>
+      <button class="link-btn" id="gateSwitch" type="button">Create an account</button>
+    </p>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-icon">💼</div>
+    <div>
+      <h1>Workana Jobs</h1>
+      <p>Workana job postings</p>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <div class="status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Loading…</span>
+      <strong id="totalCount">—</strong>
+    </div>
+    <button class="btn btn-ghost" id="refreshBtn"><span class="ico">⟳</span> Refresh</button>
+    <button class="btn btn-ghost" id="statsBtn"><span class="ico">📊</span> Statistics</button>
+    <button class="btn btn-ghost" id="accountBtn"><span class="ico">👤</span> <span id="accountLabel">Account</span></button>
+    <button class="btn btn-icon" id="themeBtn" title="Toggle theme">◐</button>
+  </div>
+</header>
+
+<!-- ------------------------------------------------------------------ -->
+<!-- Account / Workana session panel                                     -->
+<!-- ------------------------------------------------------------------ -->
+<div class="modal-backdrop" id="accountBackdrop" hidden>
+  <div class="modal modal-sm" id="accountModal"></div>
+</div>
+
+<div class="shell">
+
+  <!-- ---------------------------------------------------------------- -->
+  <!-- Left filter rail                                                  -->
+  <!-- ---------------------------------------------------------------- -->
+  <aside class="rail" id="rail">
+    <div class="rail-head">
+      <span class="rail-title">Filters</span>
+      <button class="link-btn" id="clearFilters">Clear all</button>
+    </div>
+
+    <div class="rail-scroll">
+      <div class="f-group">
+        <div class="search-input">
+          <span class="search-ico">⌕</span>
+          <input type="search" id="search" placeholder="Search title, description, skills…" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="f-group">
+        <label class="f-label">Contract type</label>
+        <div class="seg" id="typeSeg">
+          <button class="seg-btn active" data-type="">All <em id="cAll">0</em></button>
+          <button class="seg-btn" data-type="hourly">Hourly <em id="cHourly">0</em></button>
+          <button class="seg-btn" data-type="fixed">Fixed <em id="cFixed">0</em></button>
+        </div>
+      </div>
+
+      <div class="f-group">
+        <label class="f-label" for="since">Posted within</label>
+        <select id="since" class="f-control">
+          <option value="">Any time</option>
+          <option value="1">Last hour</option>
+          <option value="6">Last 6 hours</option>
+          <option value="24">Last 24 hours</option>
+          <option value="72">Last 3 days</option>
+          <option value="168">Last week</option>
+        </select>
+      </div>
+
+      <div class="f-group">
+        <label class="f-label">Budget (USD)</label>
+        <div class="f-row">
+          <input type="number" id="minBudget" min="0" step="50" placeholder="Min" class="f-control">
+          <span class="f-dash">–</span>
+          <input type="number" id="maxBudget" min="0" step="50" placeholder="Max" class="f-control">
+        </div>
+      </div>
+
+      <div class="f-group">
+        <label class="f-label" for="maxBids">Max bids</label>
+        <input type="number" id="maxBids" min="0" step="1" placeholder="No limit" class="f-control">
+      </div>
+
+      <div class="f-group">
+        <label class="f-label">Quick filters</label>
+        <label class="f-check"><input type="checkbox" id="starred"> <span>★ Starred only</span></label>
+        <label class="f-check"><input type="checkbox" id="verified"> <span>Payment verified</span></label>
+        <label class="f-check"><input type="checkbox" id="noBids"> <span>No bids yet</span></label>
+        <label class="f-check"><input type="checkbox" id="notBid"> <span>Not bid by me</span></label>
+        <label class="f-check"><input type="checkbox" id="hasContacts"> <span>Client is contacting someone</span></label>
+        <label class="f-check"><input type="checkbox" id="noContacts"> <span>Nobody contacted yet</span></label>
+        <label class="f-check"><input type="checkbox" id="hasReply"> <span>Client has replied</span></label>
+        <label class="f-check"><input type="checkbox" id="hasHired"> <span>Client has hired before</span></label>
+      </div>
+
+      <div class="f-group">
+        <label class="f-label" for="repliedWithin">Client replied within</label>
+        <select id="repliedWithin" class="f-control">
+          <option value="">Any time</option>
+          <option value="1">Last hour</option>
+          <option value="6">Last 6 hours</option>
+          <option value="24">Last 24 hours</option>
+          <option value="72">Last 3 days</option>
+        </select>
+      </div>
+
+      <div class="f-group facet" data-facet="category">
+        <label class="f-label">Category <span class="f-count" data-selected></span></label>
+        <div class="facet-list" data-list></div>
+      </div>
+
+      <div class="f-group facet" data-facet="country">
+        <label class="f-label">Client country <span class="f-count" data-selected></span></label>
+        <input type="search" class="f-control facet-search" data-search placeholder="Filter countries…">
+        <div class="facet-list" data-list></div>
+      </div>
+
+      <div class="f-group facet" data-facet="skill">
+        <label class="f-label">Skills <span class="f-count" data-selected></span></label>
+        <input type="search" class="f-control facet-search" data-search placeholder="Filter skills…">
+        <div class="facet-list" data-list></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ---------------------------------------------------------------- -->
+  <!-- Results                                                           -->
+  <!-- ---------------------------------------------------------------- -->
+  <main class="content">
+    <div class="toolbar">
+      <div class="chips" id="chips"></div>
+      <div class="toolbar-right">
+        <span class="result-count" id="resultCount"></span>
+        <select id="sort" class="f-control compact">
+          <option value="newest">Newest posted</option>
+          <option value="collected">Recently collected</option>
+          <option value="oldest">Oldest posted</option>
+          <option value="budget_high">Highest budget</option>
+          <option value="budget_low">Lowest budget</option>
+          <option value="bids_low">Fewest bids</option>
+          <option value="bids_high">Most bids</option>
+          <option value="reply_recent">Most recent client reply</option>
+          <option value="contacts_high">Most contacts</option>
+          <option value="hire_rate">Best hire rate</option>
+          <option value="client_rating">Best client rating</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="jobs">
+        <thead>
+          <tr>
+            <th class="c-no">#</th>
+            <th class="c-posted">Posted</th>
+            <th class="c-reply">Last reply</th>
+            <th class="c-title">Title</th>
+            <th class="c-budget">Budget</th>
+            <th class="c-country">Country</th>
+            <th class="c-client" title="Share of the client's projects that ended in a payment">Hire rate</th>
+            <th class="c-num">Bids</th>
+            <th class="c-num">Contacts</th>
+            <th class="c-act"></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+
+    <div class="empty" id="empty" hidden>
+      <p class="empty-title">No jobs match these filters</p>
+      <p class="empty-sub">Clear some filters, or hit <strong>Refresh</strong> to scrape Workana.</p>
+    </div>
+
+    <div class="pager" id="pager"></div>
+  </main>
+</div>
+
+<div class="drawer-backdrop" id="backdrop" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="Job details"></aside>
+
+<div class="modal-backdrop" id="statsBackdrop" hidden>
+  <div class="modal" id="statsModal"></div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

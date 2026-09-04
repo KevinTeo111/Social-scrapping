@@ -1,0 +1,22 @@
+{
+  "name": "workana-job-board",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted Workana job board: scrapes workana.com with your own session cookies and serves a searchable dashboard.",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "scrape": "node src/cli/scrape.js",
+    "login-check": "node src/cli/login-check.js",
+    "verify": "node scripts/verify.mjs",
+    "shot": "node scripts/shot.mjs",
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "playwright": "1.62.1"
+  }
+}

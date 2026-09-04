@@ -1,0 +1,22 @@
+# Railway service configuration.
+#
+# Two settings in the dashboard are not expressible here and are easy to miss:
+#
+#   1. A Volume mounted at /app/data. Without it the job corpus, the encryption
+#      key and every member's Workana session are erased on each redeploy.
+#   2. APP_SECRET as a service variable. Left unset it is generated into the
+#      volume, and losing the volume then makes all stored sessions unreadable.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "node src/server.js"
+# /healthz is deliberately unauthenticated; everything else requires a session.
+healthcheckPath = "/healthz"
+healthcheckTimeout = 120
+# A scrape drives a real Chromium, so a restart mid-run should not be a loop.
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+numReplicas = 1
