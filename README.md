@@ -225,7 +225,9 @@ Set these service variables:
 | `REGISTRATION_CODE` | an invite code; the URL is public |
 | `DB_FILE` | `/app/data/workana.db` |
 
-**Mount a Volume at `/app/data`.** Container filesystems are wiped on redeploy, and that
+**Mount a Railway Volume at `/app/data`** (Service → Variables → *Add Volume*). It has to be
+attached in the dashboard: Railway rejects a `VOLUME` instruction in the Dockerfile, so the
+image cannot declare it for you. Container filesystems are wiped on redeploy, and that
 directory holds the job corpus, `secret.key`, and each member's earned Cloudflare clearance.
 Without the volume they vanish on the next deploy; without `APP_SECRET` set explicitly, a
 replaced volume makes every stored Workana session permanently undecryptable. The app warns
