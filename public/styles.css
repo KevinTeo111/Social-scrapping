@@ -281,6 +281,8 @@ select.f-control {
 .j-no { color: var(--accent); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .j-time { color: var(--text-soft); font-size: 12px; font-variant-numeric: tabular-nums; }
 .j-time.fresh { color: var(--purple); font-weight: 600; }
+/* Workana's own wording, shown when it gave no date we could turn into a stamp. */
+.j-time-guess { color: var(--text-mute); font-style: italic; }
 /* A client who answered in the last day is worth noticing. */
 .j-reply { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-soft); }
 .j-reply.hot  { color: var(--green); font-weight: 600; }

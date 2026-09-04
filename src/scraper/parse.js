@@ -92,12 +92,14 @@ export function pageExtractList() {
     const widthPct = parseFloat((starsFill?.style?.width || '').replace('%', ''));
 
     /*
-     * "Last reply: 9 hours ago" — how recently the client answered anyone on
-     * this project. Only present when they have actually replied, which is why
-     * it is one of the better signals on the board: it separates clients who are
-     * actively working the thread from ones who posted and vanished. The label
-     * and the value are two sibling spans, so read the last one rather than
-     * stripping the localised label off the combined text.
+     * "Last reply: 9 hours ago" — how recently this client last answered anyone.
+     * It sits in the client's block, not the project's, and the data bears that
+     * out: it regularly predates the posting date, so it measures the client's
+     * responsiveness in general rather than activity on this thread. Still one of
+     * the better signals on the board — it separates clients who talk to
+     * freelancers from ones who post and vanish. The label and the value are two
+     * sibling spans, so read the last one rather than stripping the localised
+     * label off the combined text.
      */
     const replyEl = author?.querySelector('.message-created');
     const replySpans = replyEl ? [...replyEl.querySelectorAll('span')] : [];
@@ -475,6 +477,19 @@ export function parseRelative(text, now = Date.now()) {
   if (/just now|seconds? ago|hace unos segundos|agora|ahora/.test(t)) return new Date(now).toISOString();
   if (/^today\b|\bhoy\b|\bhoje\b/.test(t)) return new Date(now).toISOString();
   if (/^yesterday\b|\bayer\b|\bontem\b/.test(t)) return new Date(now - UNITS.day).toISOString();
+
+  /*
+   * "Last month" is Workana's wording once a posting ages past a few weeks, and
+   * it carries no digit for the numeric branch below to find. Left unparsed the
+   * job ends up with no date at all, and the board then falls back to when *we*
+   * collected it -- which reads as "posted minutes ago" for a project that is
+   * actually months old. One unit back is an approximation, but a truthful one.
+   */
+  const last = t.match(/\blast\s+(week|month|year)\b/);
+  if (last) return new Date(now - UNITS[last[1]]).toISOString();
+  if (/\bsemana\s+(pasada|passada)\b/.test(t)) return new Date(now - UNITS.week).toISOString();
+  if (/\bm[eê]s\s+(pasado|passado)\b/.test(t)) return new Date(now - UNITS.month).toISOString();
+  if (/\ba[nñ]o\s+(pasado|passado)\b/.test(t)) return new Date(now - UNITS.year).toISOString();
 
   // "an hour ago" / "a day ago" carry an article rather than a digit.
   const article = t.match(/\ban?\s+(minute|hour|day|week|month|year)\b/);

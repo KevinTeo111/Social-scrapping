@@ -89,6 +89,15 @@ const fullStamp = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
  */
 const postedAt = (j) => j.published_approx_at || j.published_at || j.first_seen_at;
 
+/**
+ * Whether that timestamp is Workana's or ours. When neither published field
+ * survives parsing the fallback above is our own collection time, and showing
+ * that as "Posted" turns a months-old project into a brand-new one — which is
+ * exactly how a job whose client last replied 14 days ago can appear to have
+ * been posted four minutes ago. Such rows show Workana's own wording instead.
+ */
+const hasPostedDate = (j) => Boolean(j.published_approx_at || j.published_at);
+
 const money = (n) => (n === null || n === undefined ? '' : n.toLocaleString('en-US'));
 
 /**
@@ -250,7 +259,8 @@ function rowFor(job) {
   if (job.has_own_bid) tr.classList.add('mine');
 
   const posted = postedAt(job);
-  const ageMin = (Date.now() - new Date(posted).getTime()) / 60000;
+  const dated = hasPostedDate(job);
+  const ageMin = dated ? (Date.now() - new Date(posted).getTime()) / 60000 : Infinity;
 
   /* # */
   const tdNo = el('td');
@@ -259,8 +269,13 @@ function rowFor(job) {
 
   /* Posted */
   const tdPosted = el('td');
-  const pt = el('span', `j-time${ageMin < 60 ? ' fresh' : ''}`, shortStamp(posted));
-  pt.title = `Posted ${fullStamp(posted)} (${timeAgo(posted)})`;
+  const pt = dated
+    ? el('span', `j-time${ageMin < 60 ? ' fresh' : ''}`, shortStamp(posted))
+    : el('span', 'j-time j-time-guess', job.published_text || '—');
+  pt.title = dated
+    ? `Posted ${fullStamp(posted)} (${timeAgo(posted)})`
+    : `Workana gave no date we could read${job.published_text ? ` — it said “${job.published_text}”` : ''}. ` +
+      `Ordered by when we collected it, ${fullStamp(job.first_seen_at)}.`;
   tdPosted.appendChild(pt);
   tr.appendChild(tdPosted);
 
@@ -671,7 +686,7 @@ function drawerHtml({ job, reviews, insights, otherJobs }) {
     <button class="drawer-close" data-close>×</button>
     <h2>${esc(job.title)}</h2>
     <div class="drawer-sub">
-      No. ${String(job.no).padStart(6, '0')} · posted ${esc(timeAgo(posted))} · collected ${esc(timeAgo(job.first_seen_at))}
+      No. ${String(job.no).padStart(6, '0')} · posted ${esc(hasPostedDate(job) ? timeAgo(posted) : job.published_text || 'at an unknown date')} · collected ${esc(timeAgo(job.first_seen_at))}
       ${job.status_label ? ` · ${esc(job.status_label)}` : ''}
     </div>
     <div class="drawer-tools">
@@ -710,7 +725,12 @@ function drawerHtml({ job, reviews, insights, otherJobs }) {
         )}
         ${kv('Project size', esc(job.project_size))}
         ${kv('Duration', esc(job.project_duration))}
-        ${kv('Posted', `${esc(shortStamp(posted))}${job.published_text ? ` (${esc(job.published_text)})` : ''}`)}
+        ${kv(
+          'Posted',
+          hasPostedDate(job)
+            ? `${esc(shortStamp(posted))}${job.published_text ? ` (${esc(job.published_text)})` : ''}`
+            : `<span style="color:var(--text-mute)">${esc(job.published_text || 'Unknown')} — no exact date</span>`,
+        )}
         ${kv('Collected', esc(fullStamp(job.first_seen_at)))}
         ${kv('Status', esc(job.status_label))}
       </div>
