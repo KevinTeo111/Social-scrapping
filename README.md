@@ -370,6 +370,8 @@ src/
   cli/                 scrape / login-check entry points
 public/                the dashboard (no build step, no framework)
 scripts/               verify.mjs, inspect-db.mjs, shot.mjs diagnostics
+                       backfill-posted.mjs, backfill-bids.mjs repairs
+                       (both default to a dry run; pass --apply to write)
 ```
 
 ## Scope

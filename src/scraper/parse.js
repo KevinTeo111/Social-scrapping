@@ -253,7 +253,9 @@ export function pageExtractDetail() {
     })),
     isFeatured: Boolean(root.querySelector('aside .featured-block')),
     bidActionLabel: text(bidBtn),
-    hasOwnBid: /improve|edit|ver propuesta|mejorar/i.test(text(bidBtn) || ''),
+    // Kept in sync with OWN_BID_LABEL below; this runs inside the page, where
+    // module scope is not available.
+    hasOwnBid: /improve|edit|melhorar|mejorar|ver\s+(propuesta|proposta)/i.test(text(bidBtn) || ''),
     bids: activity.find((a) => /bids/i.test(a.label || ''))?.value ?? null,
     interested: activity.find((a) => /interested/i.test(a.label || ''))?.value ?? null,
     client: {
@@ -307,7 +309,11 @@ export function pageExtractInsights() {
   }
 
   const bodyText = document.body.innerText.replace(/\r/g, '');
-  const ownBudget = bodyText.match(/([A-Z]{3}\s*[\d.,]+)\s*\n\s*Your budget/i);
+  // "USD 400 / Your budget" — the panel Workana shows only to the freelancer who
+  // bid, in whichever of the three languages the account is set to.
+  const ownBudget = bodyText.match(
+    /([A-Z]{3}\s*[\d.,]+)\s*\n\s*(?:your budget|tu presupuesto|seu or[çc]amento)/i,
+  );
 
   const proposals = [];
   for (const card of document.querySelectorAll('.contender-card')) {
@@ -362,8 +368,14 @@ export function pageExtractInsights() {
     });
   }
 
-  // Mark the viewer's own proposal, shown as a separate "Your budget" panel.
-  const self = bodyText.match(/([^\n]+?)\s*\n\s*Proposal sent/i);
+  /*
+   * Mark the viewer's own proposal. The name sits on the line above a "Proposal
+   * sent" status, localised like everything else here. Matching only the English
+   * wording is why this never once fired against a Spanish or Portuguese board.
+   */
+  const self = bodyText.match(
+    /([^\n]+?)\s*\n\s*(?:proposal sent|propuesta enviada|proposta enviada)/i,
+  );
   if (self) {
     const me = self[1].trim();
     for (const p of proposals) if (p.freelancer === me) p.isSelf = true;
@@ -531,6 +543,17 @@ export function parseAbsoluteDate(text) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/**
+ * The bid button's label is what betrays that this account already bid: it reads
+ * "Place a bid" to everyone else and "Improve proposal" to the bidder. Workana
+ * serves the board in three languages, so all three wordings are matched.
+ *
+ * Deliberately absent: "Go to messages", which replaces the button once a
+ * conversation exists. A client can open one by inviting a freelancer who never
+ * bid, so it proves contact, not a proposal — that is what `wasContacted` is for.
+ */
+export const OWN_BID_LABEL = /improve|edit|melhorar|mejorar|ver\s+(propuesta|proposta)/i;
+
 /** Turns a raw list card into the shape `upsertJob` expects. */
 export function normaliseListJob(raw, now = Date.now()) {
   const budget = parseBudget(raw.budgetText);
@@ -551,7 +574,7 @@ export function normaliseListJob(raw, now = Date.now()) {
     isMaxHighlighted: Boolean(raw.isMaxHighlighted),
     wasContacted: Boolean(raw.wasContacted),
     bidActionLabel: raw.bidActionLabel || null,
-    hasOwnBid: /improve|mejorar|edit/i.test(raw.bidActionLabel || ''),
+    hasOwnBid: OWN_BID_LABEL.test(raw.bidActionLabel || ''),
     clientId: raw.client?.id || null,
     client: raw.client?.id
       ? {
