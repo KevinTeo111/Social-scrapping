@@ -5,7 +5,8 @@ import { db } from '../src/db.js';
 // real member's address can never match.
 const TEST_EMAIL =
   "email LIKE 'vhost%@example.com' OR email LIKE 'alice%@example.com' " +
-  "OR email LIKE 'bob%@example.com' OR email = 'preview@example.com'";
+  "OR email LIKE 'bob%@example.com' OR email LIKE 'statuscheck%@example.com' " +
+  "OR email = 'preview@example.com'";
 
 const doomed = db.prepare(`SELECT id, email FROM users WHERE ${TEST_EMAIL}`).all();
 if (!doomed.length) {

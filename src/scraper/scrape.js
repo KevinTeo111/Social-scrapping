@@ -35,6 +35,15 @@ export const isScraping = () => Boolean(running);
 export const scrapingUserId = () => runningUserId;
 export const queueLength = () => pending.length;
 
+/**
+ * A run walks list pages, then detail pages, then insight pages, and the whole
+ * thing takes minutes. Without this the UI can only say "scraping", which is
+ * indistinguishable from a hang; publishing the current phase lets it show that
+ * work is actually advancing.
+ */
+let progress = null;
+export const currentProgress = () => progress;
+
 export function scrape(options = {}) {
   const task = () => {
     runningUserId = options.userId ?? null;
@@ -83,12 +92,21 @@ async function runScrape({
   userId = null,
   cookies = null,
   proxy = null,
-  onProgress = () => {},
+  onProgress: report = () => {},
 } = {}) {
   const runId = startRun(userId);
   const stats = { pages: 0, seen: 0, inserted: 0, updated: 0, details: 0, insights: 0, ok: false, error: null };
+  const startedAt = Date.now();
   let browser;
   let context;
+
+  // Every progress event is mirrored into the module-level snapshot that
+  // /api/status reads, then passed on to whatever the caller wanted to do.
+  const onProgress = (info) => {
+    progress = { ...info, userId, startedAt, pagesTarget: pages };
+    report(info);
+  };
+  onProgress({ phase: 'starting' });
 
   try {
     ({ browser, context } = await launchContext({ cookies, userId, proxy }));
@@ -205,6 +223,7 @@ async function runScrape({
     // Keep any cf_clearance this run earned so the next one starts warm.
     if (context) await saveState(context);
     finishRun(runId, stats);
+    progress = null;
     if (browser) await browser.close().catch(() => {});
   }
 

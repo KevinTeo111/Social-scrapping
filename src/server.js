@@ -2,7 +2,15 @@ import path from 'node:path';
 import express from 'express';
 import { config } from './config.js';
 import { db, lastRun, upsertUserJob, adoptLegacyData } from './db.js';
-import { scrape, isScraping, scrapingUserId, queueLength, fetchInsights, checkLogin } from './scraper/scrape.js';
+import {
+  scrape,
+  isScraping,
+  scrapingUserId,
+  queueLength,
+  currentProgress,
+  fetchInsights,
+  checkLogin,
+} from './scraper/scrape.js';
 import {
   SESSION_COOKIE,
   AuthError,
@@ -575,10 +583,28 @@ let lastError = null;
 
 app.get('/api/status', requireAuth, (req, res) => {
   const run = lastRun();
+
+  /*
+   * The backlog is what explains a badge that never goes out. Each run enriches
+   * only DETAIL_BUDGET jobs, so a freshly filled corpus has hundreds of pending
+   * detail pages and will keep working for hours. Reporting the remainder turns
+   * "still scraping?" into a number that visibly counts down.
+   */
+  const backlog = db
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM jobs WHERE detail_fetched_at IS NULL) AS details,
+         (SELECT COUNT(*) FROM jobs
+           WHERE insights_fetched_at IS NULL AND COALESCE(bids, 0) > 0) AS insights`,
+    )
+    .get();
+
   res.json({
     scraping: isScraping(),
     scrapingMine: scrapingUserId() === req.user.id,
     queued: queueLength(),
+    progress: currentProgress(),
+    backlog,
     lastRun: run,
     lastError,
     autoScrapeMinutes: config.autoScrapeMinutes,

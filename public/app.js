@@ -848,6 +848,39 @@ async function showStats() {
 /* Status polling                                                      */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Turns the run's current phase into a few words. A run walks list pages, then
+ * detail pages, then insight pages, and can easily take five minutes — a badge
+ * that only ever says "scraping" looks identical to one that has hung.
+ */
+function describeProgress(p) {
+  if (!p) return ' Workana…';
+  switch (p.phase) {
+    case 'list':
+    case 'list-done':
+      return ` list page ${p.page}${p.seen ? ` · ${p.seen} seen` : ''}`;
+    case 'list-retry':
+      return ` list page ${p.page} (retry ${p.attempt})`;
+    case 'detail':
+      return ` details ${p.done}/${p.total}`;
+    case 'insights':
+      return ` insights ${p.done}/${p.total}`;
+    default:
+      return ' Workana…';
+  }
+}
+
+/** Explains why the badge keeps lighting up: enrichment runs on a per-run budget. */
+function describeBacklog(b) {
+  if (!b) return '';
+  if (!b.details && !b.insights) return 'Every job is fully enriched.';
+  return (
+    `Still to enrich: ${b.details} detail page(s), ${b.insights} insight page(s). ` +
+    'Each run takes a fixed budget of these, so the scraper keeps working through ' +
+    'the backlog across several runs.'
+  );
+}
+
 async function pollStatus() {
   try {
     const res = await fetch('/api/status');
@@ -858,9 +891,11 @@ async function pollStatus() {
 
     if (s.scraping) {
       dot.className = 'status-dot busy';
-      text.textContent = s.scrapingMine
-        ? 'Scraping Workana…'
-        : `Another member is scraping${s.queued ? ` · ${s.queued} queued` : ''}`;
+      const who = s.scrapingMine ? 'Scraping' : 'Another member is scraping';
+      const parts = [who + describeProgress(s.progress)];
+      if (s.queued) parts.push(`${s.queued} queued`);
+      text.textContent = parts.join(' · ');
+      text.title = describeBacklog(s.backlog);
     } else if (s.lastError) {
       dot.className = 'status-dot error';
       text.textContent = s.lastError.slice(0, 60);
@@ -868,6 +903,7 @@ async function pollStatus() {
       dot.className = 'status-dot';
       const loaded = s.lastRun?.finished_at ? new Date(s.lastRun.finished_at).toLocaleTimeString() : '—';
       text.textContent = `Loaded ${loaded}`;
+      text.title = describeBacklog(s.backlog);
     }
     $('#totalCount').textContent = `${s.total} total`;
 
