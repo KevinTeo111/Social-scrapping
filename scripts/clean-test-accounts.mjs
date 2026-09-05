@@ -1,5 +1,7 @@
 /** Removes accounts created by the test suites, leaving real members alone. */
+import fs from 'node:fs';
 import { db } from '../src/db.js';
+import { statePathFor } from '../src/scraper/browser.js';
 
 // Every address the test suites have ever generated, all under example.com so a
 // real member's address can never match.
@@ -19,6 +21,10 @@ if (!doomed.length) {
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
       db.prepare('DELETE FROM user_jobs WHERE user_id = ?').run(u.id);
       db.prepare('DELETE FROM users WHERE id = ?').run(u.id);
+      // A verified account also left a browser profile behind, holding the
+      // Cloudflare clearance it earned. Deleting the row without it would leave
+      // an orphaned credential on disk.
+      fs.rmSync(statePathFor(u.id), { force: true });
     }
     db.exec('COMMIT');
   } catch (err) {

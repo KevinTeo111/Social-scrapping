@@ -1,6 +1,8 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import { config } from './config.js';
+import { loadWorkanaCookies, hasSessionCookie, describeSession } from './cookies.js';
 import { db, lastRun, upsertUserJob, adoptLegacyData } from './db.js';
 import {
   scrape,
@@ -31,6 +33,7 @@ import {
   setWorkanaProxy,
   getWorkanaProxy,
   findUser,
+  requireAdmin,
 } from './auth.js';
 
 const app = express();
@@ -178,6 +181,57 @@ app.post('/api/session/cookies', requireAuth, (req, res) => {
 app.delete('/api/session/cookies', requireAuth, (req, res) => {
   clearWorkanaCookies(req.user.id);
   res.json({ ok: true });
+});
+
+/*
+ * A local install usually already has an export sitting next to the code —
+ * COOKIE_FILE, `Hiyashi.json` by default — which is what the CLI drives. Reading
+ * it straight into the account saves exporting and pasting the same cookies a
+ * second time.
+ *
+ * Owner-only, and deliberately so: the file is one specific person's live
+ * Workana login, so on an instance with several members any other member being
+ * able to adopt it would be credential theft with a button. Everyone else uses
+ * the file picker in the browser, which never involves the server's disk.
+ */
+function describeCookieFile() {
+  const file = path.resolve(config.cookieFile);
+  if (!fs.existsSync(file)) return { available: false, file };
+  try {
+    const cookies = loadWorkanaCookies(file);
+    return {
+      available: true,
+      file,
+      count: cookies.length,
+      hasSession: hasSessionCookie(cookies),
+      session: describeSession(cookies),
+      modifiedAt: fs.statSync(file).mtime.toISOString(),
+    };
+  } catch (err) {
+    // A malformed or non-Workana export is "not available", with the reason.
+    return { available: false, file, error: err.message };
+  }
+}
+
+app.get('/api/session/file', requireAuth, (req, res) => {
+  if (!req.user.is_admin) return res.json({ available: false, reason: 'owner-only' });
+  res.json(describeCookieFile());
+});
+
+app.post('/api/session/file', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const file = path.resolve(config.cookieFile);
+    if (!fs.existsSync(file)) throw new AuthError(`No cookie file at ${file}.`);
+    const result = setWorkanaCookies(req.user.id, fs.readFileSync(file, 'utf8'));
+    res.json({
+      ok: true,
+      file,
+      ...result,
+      warning: result.hasSession ? null : 'No `workana_session` cookie in that file — you may not be signed in.',
+    });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
 });
 
 /**
@@ -378,7 +432,8 @@ const SELECT_COLUMNS = `
   j.contacts_count, j.pre_selected_count, j.insights_fetched_at,
   j.last_reply_text, j.last_reply_at,
   j.client_id,
-  c.name AS client_name, c.country AS client_country, c.country_code AS client_country_code,
+  c.name AS client_name, c.avatar_url AS client_avatar_url,
+  c.country AS client_country, c.country_code AS client_country_code,
   c.rating AS client_rating, c.published_projects AS client_published, c.projects_paid AS client_paid,
   c.hire_rate AS client_hire_rate, c.payment_verified AS client_verified,
   c.member_since AS client_member_since, c.last_login AS client_last_login,

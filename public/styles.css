@@ -259,6 +259,7 @@ select.f-control {
 .c-reply     { width: 90px; }
 .c-title     { width: auto; }
 .c-budget    { width: 152px; }
+.c-cli       { width: 150px; }
 .c-country   { width: 134px; }
 .c-client    { width: 120px; }
 .c-num       { width: 76px; text-align: right !important; }
@@ -325,6 +326,18 @@ tr:hover .j-title .tx { color: var(--accent); }
 .tag.mine   { background: var(--green-soft); color: var(--green); }
 .tag.budget { background: transparent; color: var(--text-mute); font-weight: 500;
   text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+
+/* Client identity. Workana serves its own generic silhouette for members who
+   never uploaded a picture, so a good few of these are the same grey figure. */
+.j-cli { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.j-cli-av {
+  width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex: none;
+  background: var(--bg-sunken); border: 1px solid var(--border-soft);
+}
+.j-cli .nm {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12.5px; color: var(--text-soft);
+}
 
 .j-country { display: flex; align-items: center; gap: 7px; color: var(--text-soft); font-size: 12.5px; }
 .j-country .cn { overflow: hidden; text-overflow: ellipsis; }

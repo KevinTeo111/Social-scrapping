@@ -322,6 +322,20 @@ function rowFor(job) {
   tdBudget.appendChild(bw);
   tr.appendChild(tdBudget);
 
+  /* Client — who is actually posting this */
+  const tdCli = el('td');
+  const cliw = el('div', 'j-cli');
+  cliw.innerHTML =
+    `<img class="j-cli-av" src="${esc(job.client_avatar_url || AVATAR_PLACEHOLDER)}" ` +
+    `alt="" loading="lazy" onerror="${AVATAR_FALLBACK}">` +
+    `<span class="nm">${esc(job.client_name || 'Unknown')}</span>`;
+  cliw.title = job.client_name
+    ? `${job.client_name}${job.client_country ? ` · ${job.client_country}` : ''}` +
+      (job.client_published ? ` · ${job.client_published} project(s) posted` : '')
+    : 'Workana did not name this client';
+  tdCli.appendChild(cliw);
+  tr.appendChild(tdCli);
+
   /* Country */
   const tdCountry = el('td');
   const cw = el('div', 'j-country');
@@ -1157,12 +1171,22 @@ function accountHtml() {
     <h3 style="margin:22px 0 8px;font-size:13px">Your Workana session</h3>
     <p class="acct-help">
       The board scrapes Workana <em>as you</em>, so it needs your own cookies. In Chrome, install a
-      cookie-editor extension, open <code>workana.com</code> while signed in, export as JSON, and
-      paste it below. Only <code>workana.com</code> cookies are kept — the rest of the export is
-      discarded — and what is stored is encrypted.
+      cookie-editor extension, open <code>workana.com</code> while signed in, and export as JSON —
+      then attach the downloaded file below. Only <code>workana.com</code> cookies are kept — the
+      rest of the export is discarded — and what is stored is encrypted.
       <strong>This is a live login to your Workana account; only add it to an instance you trust.</strong>
     </p>
-    <textarea class="cookie-box" id="cookieBox" placeholder='[{"domain":".workana.com","name":"workana_session", ...}]'></textarea>
+    <div class="acct-actions" style="margin-bottom:10px">
+      <button class="btn btn-primary" id="pickCookieFile">📂 Attach export file…</button>
+      <span id="serverFileSlot"></span>
+      <input type="file" id="cookieFileInput" accept=".json,application/json" hidden>
+    </div>
+    <p class="acct-help" id="fileResult" hidden></p>
+
+    <details style="margin-bottom:8px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text-mute)">…or paste the JSON</summary>
+      <textarea class="cookie-box" id="cookieBox" placeholder='[{"domain":".workana.com","name":"workana_session", ...}]'></textarea>
+    </details>
     <div class="acct-actions">
       <button class="btn btn-primary" id="saveCookies">Save session</button>
       <button class="btn" id="verifyCookies" ${me.hasCookies ? '' : 'disabled'}>Verify</button>
@@ -1197,6 +1221,65 @@ function openAccount() {
     p.innerHTML = bad ? `<span style="color:var(--red)">${esc(msg)}</span>` : esc(msg);
     p.hidden = false;
   };
+
+  const sayFile = (msg, bad) => {
+    const p = $('#fileResult');
+    p.innerHTML = bad ? `<span style="color:var(--red)">${esc(msg)}</span>` : msg;
+    p.hidden = false;
+  };
+
+  /**
+   * Attaching the exported file directly. The file is read in the browser and
+   * posted as text to the same endpoint the textarea uses, so nothing new has to
+   * be trusted server-side — it only removes the copy-and-paste step, which is
+   * where a truncated export usually comes from.
+   */
+  $('#pickCookieFile').onclick = () => $('#cookieFileInput').click();
+
+  $('#cookieFileInput').onchange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const r = await api('/api/session/cookies', { method: 'POST', body: JSON.stringify({ cookies: raw }) });
+      await refreshMe();
+      openAccount();
+      sayFile(`Attached ${r.count} Workana cookies from ${esc(file.name)}.${r.warning ? ` ${esc(r.warning)}` : ' Verifying…'}`);
+      if (r.hasSession) document.getElementById('verifyCookies')?.click();
+    } catch (ex) {
+      sayFile(ex.message, true);
+    }
+  };
+
+  // The server-side export exists only on a local install, and only its owner
+  // may adopt it, so the button is drawn once the server says both are true.
+  fetch('/api/session/file')
+    .then((r) => r.json())
+    .then((info) => {
+      const slot = $('#serverFileSlot');
+      if (!slot || !info.available) return;
+      const name = info.file.split(/[\\/]/).pop();
+      slot.innerHTML = `<button class="btn" id="loadServerFile">⤓ Load ${esc(name)}</button>`;
+      const btn = $('#loadServerFile');
+      btn.title =
+        `${info.count} Workana cookie(s) in ${info.file}` +
+        (info.hasSession ? '' : ' — no workana_session, you may not be signed in') +
+        `\nLast changed ${fullStamp(info.modifiedAt)}`;
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const r = await api('/api/session/file', { method: 'POST' });
+          await refreshMe();
+          openAccount();
+          sayFile(`Loaded ${r.count} cookies from the server's export.${r.warning ? ` ${esc(r.warning)}` : ' Verifying…'}`);
+          if (r.hasSession) document.getElementById('verifyCookies')?.click();
+        } catch (ex) {
+          sayFile(ex.message, true);
+          btn.disabled = false;
+        }
+      };
+    })
+    .catch(() => {});
 
   $('#saveCookies').onclick = async (e) => {
     const raw = $('#cookieBox').value.trim();
