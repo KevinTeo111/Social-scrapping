@@ -327,7 +327,7 @@ export async function fetchInsightsOn(page, slug, userId = null) {
         const badges = document.querySelectorAll('.contender-card .badge');
         return badges.length > 0 && [...badges].some((b) => b.style.display === 'none');
       },
-      { timeout: 15000 },
+      { timeout: config.insightHydrateMs },
     )
     .catch(() => {});
   await sleep(400);
@@ -369,27 +369,42 @@ async function enrichInsights(context, { budget, onProgress = () => {}, userId =
 
   if (!targets.length) return 0;
 
-  const page = await context.newPage();
+  // Each insights page waits on Vue to hydrate before it can be read, so this
+  // phase is mostly idle waiting — the slowest part of a run when done one at a
+  // time, and the one that gains most from lanes.
+  const lanes = Math.max(1, Math.min(config.insightConcurrency, 4));
+  const queue = [...targets];
   let done = 0;
-  try {
-    for (const slug of targets) {
+
+  await Promise.all(
+    Array.from({ length: lanes }, async () => {
+      const page = await context.newPage();
       try {
-        await fetchInsightsOn(page, slug, userId);
-        done += 1;
-        onProgress({ phase: 'insights', slug, done, total: targets.length });
-      } catch (err) {
-        if (err.code === 'CF_CHALLENGE') break;
-        // Some jobs have no insights page (closed, or not visible to us).
-        db.prepare('UPDATE jobs SET insights_fetched_at = ? WHERE slug = ?').run(
-          new Date().toISOString(),
-          slug,
-        );
+        while (queue.length) {
+          const slug = queue.shift();
+          try {
+            await fetchInsightsOn(page, slug, userId);
+            done += 1;
+            onProgress({ phase: 'insights', slug, done, total: targets.length });
+          } catch (err) {
+            if (err.code === 'CF_CHALLENGE') {
+              queue.length = 0; // back off entirely, try again next run
+              break;
+            }
+            // Some jobs have no insights page (closed, or not visible to us).
+            db.prepare('UPDATE jobs SET insights_fetched_at = ? WHERE slug = ?').run(
+              new Date().toISOString(),
+              slug,
+            );
+          }
+          await jitter();
+        }
+      } finally {
+        await page.close().catch(() => {});
       }
-      await jitter();
-    }
-  } finally {
-    await page.close().catch(() => {});
-  }
+    }),
+  );
+
   return done;
 }
 

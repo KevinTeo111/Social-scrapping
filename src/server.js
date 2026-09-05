@@ -713,23 +713,26 @@ app.post('/api/insights/:slug', requireAuth, async (req, res) => {
 let nextRunAt = null;
 let timer = null;
 
-function scheduleNext() {
+/** Re-check this soon when the tick lands on top of a run already in progress. */
+const BUSY_RETRY_MS = 60_000;
+
+function scheduleNext(delay = config.autoScrapeMinutes * 60_000) {
   clearTimeout(timer);
   if (!config.autoScrapeMinutes) {
     nextRunAt = null;
     return;
   }
-  const delay = config.autoScrapeMinutes * 60_000;
   nextRunAt = Date.now() + delay;
   timer = setTimeout(async () => {
     /*
-     * A run now paces itself slowly enough that it can outlast the interval.
-     * Queueing another on top would compound: the queue only grows, and every
-     * run in it starts by re-walking pages the one before it just fetched. The
-     * tick is skipped instead, so the loop settles at "one run at a time".
+     * Never queue a second run behind the one in flight: the queue only grows,
+     * and each run in it would start by re-walking pages the previous one just
+     * fetched. Re-checking in a minute keeps runs effectively back to back
+     * without stacking — waiting a whole interval would leave the scraper idle
+     * for no reason.
      */
     if (isScraping() || queueLength()) {
-      scheduleNext();
+      scheduleNext(BUSY_RETRY_MS);
       return;
     }
 

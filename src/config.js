@@ -98,21 +98,32 @@ export const config = {
   emptyPageRetries: num(process.env.EMPTY_PAGE_RETRIES, 2),
 
   /*
-   * Scrape pacing. This drives one person's own account through a real browser,
-   * so the aim is to look like someone reading their job feed rather than to
-   * finish quickly. Raising the per-run budgets above made each run fetch more
-   * pages; these keep the *rate* those pages are requested at unhurried, which
-   * is what Cloudflare and Workana's own throttle actually watch.
+   * Scrape pacing, tuned for throughput: a run should finish in minutes, not
+   * tens of minutes, so the board is current rather than perpetually catching
+   * up. Both phases fetch in parallel lanes and pause only briefly between
+   * pages.
    *
-   * One detail lane, not two: parallel tabs are the clearest signal that this is
-   * not a person browsing, and the budgets already decide how much a run covers.
+   * The cost is exposure. Cloudflare's managed challenge scores request rate and
+   * concurrency, and if it starts interposing, a run stops early and keeps what
+   * it has (see the CF_CHALLENGE handling in scrape.js) — so the failure mode is
+   * a short run, not corrupt data. Dial MIN_DELAY_MS/MAX_DELAY_MS up and the
+   * concurrencies down if challenges start showing up in the status badge.
    */
-  detailConcurrency: num(process.env.DETAIL_CONCURRENCY, 1),
+  detailConcurrency: num(process.env.DETAIL_CONCURRENCY, 4),
   detailBudget: num(process.env.DETAIL_BUDGET, 100),
   /** Project Insights pages per run — these supply the "in contact" counts. */
   insightBudget: num(process.env.INSIGHT_BUDGET, 60),
-  minDelayMs: num(process.env.MIN_DELAY_MS, 2500),
-  maxDelayMs: num(process.env.MAX_DELAY_MS, 6000),
+  insightConcurrency: num(process.env.INSIGHT_CONCURRENCY, 3),
+  /**
+   * How long to wait for Vue to reconcile the contender badges before reading
+   * them. This dominates the insights phase: a project where the reconcile never
+   * visibly happens burns the whole budget. Lowering it speeds runs up at the
+   * risk of reading badges in their server-rendered default state — which is
+   * what made every freelancer look "New" once. See fetchInsightsOn().
+   */
+  insightHydrateMs: num(process.env.INSIGHT_HYDRATE_MS, 15000),
+  minDelayMs: num(process.env.MIN_DELAY_MS, 500),
+  maxDelayMs: num(process.env.MAX_DELAY_MS, 1200),
   navTimeoutMs: num(process.env.NAV_TIMEOUT_MS, 60000),
   challengeTimeoutMs: num(process.env.CHALLENGE_TIMEOUT_MS, 45000),
 
