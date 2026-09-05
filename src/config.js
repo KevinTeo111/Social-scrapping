@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +12,51 @@ const num = (value, fallback) => {
 };
 const bool = (value, fallback) =>
   value === undefined ? fallback : /^(1|true|yes|on)$/i.test(String(value));
+
+/**
+ * Memory this process is actually allowed, in bytes.
+ *
+ * `os.totalmem()` reports the *host's* RAM even inside a container, so on a
+ * small Railway instance it cheerfully claims many gigabytes that the cgroup
+ * will not let us touch. The cgroup limit is the real number; v2 exposes it as
+ * `memory.max` (the string "max" when uncapped) and v1 as `limit_in_bytes`
+ * (a sentinel near 2^63 when uncapped).
+ */
+function memoryLimitBytes() {
+  for (const file of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/limit_in_bytes']) {
+    try {
+      const raw = fs.readFileSync(file, 'utf8').trim();
+      if (raw === 'max') continue;
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0 && n < Number.MAX_SAFE_INTEGER / 2) return n;
+    } catch {
+      /* not a cgroup, or not readable — try the next one */
+    }
+  }
+  return os.totalmem();
+}
+
+/**
+ * How many browser tabs a scrape may hold open at once.
+ *
+ * Each lane is a full Chromium tab, and a tab showing a Cloudflare Turnstile
+ * challenge is one of the heavier things it can render — which is how a run on a
+ * small container ends as "Target crashed", the renderer killed for memory.
+ * Deriving this from the real limit means a workstation still gets the fast path
+ * without a hosted deployment needing to be told to slow down.
+ *
+ * The detail and insight phases run one after the other, never together, so this
+ * is the peak rather than a total to be shared out.
+ */
+const MB = 1024 * 1024;
+
+/** Split out from the lookup so the arithmetic can be tested against fixed sizes. */
+export function lanesForMemory(bytes) {
+  const budget = bytes - 500 * MB; // the browser process itself, plus Node
+  return Math.max(1, Math.min(4, Math.floor(budget / (450 * MB))));
+}
+
+const defaultLanes = () => lanesForMemory(memoryLimitBytes());
 
 export const config = {
   rootDir,
@@ -108,12 +155,17 @@ export const config = {
    * it has (see the CF_CHALLENGE handling in scrape.js) — so the failure mode is
    * a short run, not corrupt data. Dial MIN_DELAY_MS/MAX_DELAY_MS up and the
    * concurrencies down if challenges start showing up in the status badge.
+   *
+   * The lane counts default to what this machine's memory can hold rather than
+   * to a fixed number, so a workstation runs wide and a small container runs
+   * narrow without either being configured. An explicit value still wins.
    */
-  detailConcurrency: num(process.env.DETAIL_CONCURRENCY, 4),
+  memoryLimitBytes: memoryLimitBytes(),
+  detailConcurrency: num(process.env.DETAIL_CONCURRENCY, defaultLanes()),
   detailBudget: num(process.env.DETAIL_BUDGET, 100),
   /** Project Insights pages per run — these supply the "in contact" counts. */
   insightBudget: num(process.env.INSIGHT_BUDGET, 60),
-  insightConcurrency: num(process.env.INSIGHT_CONCURRENCY, 3),
+  insightConcurrency: num(process.env.INSIGHT_CONCURRENCY, defaultLanes()),
   /**
    * How long to wait for Vue to reconcile the contender badges before reading
    * them. This dominates the insights phase: a project where the reconcile never

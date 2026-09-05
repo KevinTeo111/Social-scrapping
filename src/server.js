@@ -776,6 +776,12 @@ app.listen(config.port, config.host, () => {
   console.log(`\n  Workana job board  →  http://${config.host}:${config.port}\n`);
   const n = db.prepare('SELECT COUNT(*) n FROM jobs').get().n;
   console.log(`  ${n} jobs · ${userCount()} member(s) · ${config.dbFile}`);
+  // Worth printing: the lane counts are derived from memory, so this is the one
+  // place that explains why a small container scrapes narrower than a laptop.
+  console.log(
+    `  ${Math.round(config.memoryLimitBytes / 1024 / 1024)} MB available · ` +
+      `${config.detailConcurrency} detail / ${config.insightConcurrency} insight lane(s)`,
+  );
 
   if (userCount() === 0) {
     console.log('  No accounts yet — the first person to register becomes the owner.');
