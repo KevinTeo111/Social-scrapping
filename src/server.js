@@ -722,6 +722,17 @@ function scheduleNext() {
   const delay = config.autoScrapeMinutes * 60_000;
   nextRunAt = Date.now() + delay;
   timer = setTimeout(async () => {
+    /*
+     * A run now paces itself slowly enough that it can outlast the interval.
+     * Queueing another on top would compound: the queue only grows, and every
+     * run in it starts by re-walking pages the one before it just fetched. The
+     * tick is skipped instead, so the loop settles at "one run at a time".
+     */
+    if (isScraping() || queueLength()) {
+      scheduleNext();
+      return;
+    }
+
     // Take turns between members so one account does not carry every refresh,
     // and so a member whose cookies expired does not stall the rotation.
     const candidate = db

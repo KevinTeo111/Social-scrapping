@@ -97,13 +97,22 @@ export const config = {
    */
   emptyPageRetries: num(process.env.EMPTY_PAGE_RETRIES, 2),
 
-  /** Scrape pacing — deliberately gentle, this is one user's own account. */
-  detailConcurrency: num(process.env.DETAIL_CONCURRENCY, 2),
+  /*
+   * Scrape pacing. This drives one person's own account through a real browser,
+   * so the aim is to look like someone reading their job feed rather than to
+   * finish quickly. Raising the per-run budgets above made each run fetch more
+   * pages; these keep the *rate* those pages are requested at unhurried, which
+   * is what Cloudflare and Workana's own throttle actually watch.
+   *
+   * One detail lane, not two: parallel tabs are the clearest signal that this is
+   * not a person browsing, and the budgets already decide how much a run covers.
+   */
+  detailConcurrency: num(process.env.DETAIL_CONCURRENCY, 1),
   detailBudget: num(process.env.DETAIL_BUDGET, 100),
   /** Project Insights pages per run — these supply the "in contact" counts. */
   insightBudget: num(process.env.INSIGHT_BUDGET, 60),
-  minDelayMs: num(process.env.MIN_DELAY_MS, 1200),
-  maxDelayMs: num(process.env.MAX_DELAY_MS, 2600),
+  minDelayMs: num(process.env.MIN_DELAY_MS, 2500),
+  maxDelayMs: num(process.env.MAX_DELAY_MS, 6000),
   navTimeoutMs: num(process.env.NAV_TIMEOUT_MS, 60000),
   challengeTimeoutMs: num(process.env.CHALLENGE_TIMEOUT_MS, 45000),
 
