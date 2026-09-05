@@ -172,15 +172,36 @@ async function challengeErrored(page) {
     .catch(() => false);
 }
 
-/** Clicks the Turnstile checkbox when the challenge renders an interactive one. */
+/**
+ * True when the tab itself died rather than the navigation failing. Chromium
+ * reports this as "Target crashed", and in a container it almost always means
+ * the renderer was killed for memory — several lanes each hold a full tab open,
+ * and a Turnstile challenge is one of the heavier things one can be showing.
+ */
+export function isTargetCrash(err) {
+  return /target (crashed|closed)|browser has been closed/i.test(err?.message || '');
+}
+
+/**
+ * Clicks the Turnstile checkbox when the challenge renders an interactive one.
+ *
+ * Everything here is best-effort: it runs against a page that is, by definition,
+ * in a strange state, and a frame can be torn down between listing it and
+ * querying it. A failure to nudge is not a failure to clear.
+ */
 async function nudgeTurnstile(page) {
-  for (const frame of page.frames()) {
-    if (!/challenges\.cloudflare\.com/.test(frame.url())) continue;
-    const box = await frame.$('input[type="checkbox"], .cb-lb input, #challenge-stage');
-    if (box) {
-      await box.click({ timeout: 3000 }).catch(() => {});
-      return true;
+  try {
+    for (const frame of page.frames()) {
+      if (!/challenges\.cloudflare\.com/.test(frame.url())) continue;
+      const box = await frame.$('input[type="checkbox"], .cb-lb input, #challenge-stage');
+      if (box) {
+        await box.click({ timeout: 3000 }).catch(() => {});
+        return true;
+      }
     }
+  } catch (err) {
+    // A crashed tab cannot be nudged back to life; let the caller notice.
+    if (isTargetCrash(err)) throw err;
   }
   return false;
 }
@@ -205,13 +226,18 @@ export async function gotoWithChallenge(page, url, { waitFor, referer, attempts 
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     response = await page.goto(url, { waitUntil: 'domcontentloaded', referer }).catch((e) => {
+      // Retrying a crashed tab only produces the same error more slowly.
+      if (isTargetCrash(e)) throw new BrowserCrashError(url, e);
       if (attempt === attempts) throw e;
       return null;
     });
 
     if (response !== null && !(await isChallenge(page))) break;
 
-    const cleared = await waitForClear(page, Date.now() + config.challengeTimeoutMs);
+    const cleared = await waitForClear(page, Date.now() + config.challengeTimeoutMs).catch((e) => {
+      if (isTargetCrash(e)) throw new BrowserCrashError(url, e);
+      throw e;
+    });
     if (cleared) {
       await page.waitForLoadState('domcontentloaded').catch(() => {});
       break;
@@ -223,6 +249,24 @@ export async function gotoWithChallenge(page, url, { waitFor, referer, attempts 
 
   if (waitFor) await page.waitForSelector(waitFor, { timeout: 20000 }).catch(() => {});
   return response;
+}
+
+/**
+ * The tab died mid-navigation. Distinct from a challenge: nothing about the
+ * request was refused, the browser simply ran out of room to render it.
+ */
+export class BrowserCrashError extends Error {
+  constructor(url, cause) {
+    super(
+      `Chromium crashed while loading ${url} (${cause?.message || 'target crashed'}). ` +
+        `This is usually memory: each detail and insight lane holds a browser tab open, so ` +
+        `lower DETAIL_CONCURRENCY / INSIGHT_CONCURRENCY on a small container, or give the ` +
+        `service more RAM.`,
+    );
+    this.name = 'BrowserCrashError';
+    this.code = 'BROWSER_CRASH';
+    this.cause = cause;
+  }
 }
 
 export class CloudflareChallengeError extends Error {

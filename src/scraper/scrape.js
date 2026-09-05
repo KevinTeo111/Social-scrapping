@@ -156,6 +156,13 @@ async function runScrape({
             cards = null;
             break;
           }
+          // The tab died. Nothing further can be fetched, but everything
+          // already upserted stands, so end the walk instead of failing the run.
+          if (err.code === 'BROWSER_CRASH') {
+            stats.error = `${err.message} (stopped at page ${p}, kept ${stats.seen} jobs)`;
+            cards = null;
+            break;
+          }
           throw err;
         }
 
@@ -263,8 +270,10 @@ async function enrichDetails(context, { budget, onProgress = () => {}, userId = 
             done += 1;
             onProgress({ phase: 'detail', slug, done, total: targets.length });
           } catch (err) {
-            if (err instanceof CloudflareChallengeError || err.code === 'CF_CHALLENGE') {
-              queue.length = 0; // back off entirely, try again next run
+            // A challenge means "stop asking"; a crashed tab means "we cannot
+            // ask". Either way the rest of the budget waits for the next run.
+            if (err.code === 'CF_CHALLENGE' || err.code === 'BROWSER_CRASH') {
+              queue.length = 0;
               break;
             }
             // A single unparseable job should not sink the run.
@@ -387,8 +396,14 @@ async function enrichInsights(context, { budget, onProgress = () => {}, userId =
             done += 1;
             onProgress({ phase: 'insights', slug, done, total: targets.length });
           } catch (err) {
-            if (err.code === 'CF_CHALLENGE') {
-              queue.length = 0; // back off entirely, try again next run
+            /*
+             * Stop the lane before the fallback below can run. That line means
+             * "this job has no insights page"; letting a challenge or a crashed
+             * tab reach it would stamp that on every job still in the queue and
+             * they would never be fetched again.
+             */
+            if (err.code === 'CF_CHALLENGE' || err.code === 'BROWSER_CRASH') {
+              queue.length = 0;
               break;
             }
             // Some jobs have no insights page (closed, or not visible to us).
