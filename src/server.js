@@ -634,6 +634,38 @@ app.get('/api/stats', requireAuth, async (req, res) => {
          FROM jobs GROUP BY is_hourly`,
     );
 
+  /*
+   * The freelancers this member keeps running into.
+   *
+   * Every insights page collected names the competition on that job, so summing
+   * across them says who is actually working this category — how often they
+   * appear, how often the client engages them, and what they bring. The profile
+   * fields are the same on every row for a given person, so MAX() is just a way
+   * of carrying one of them through the GROUP BY.
+   *
+   * `appearances` counts jobs, not proposals: a freelancer shows up at most once
+   * per insights page, since job_insights is keyed by (job_slug, freelancer).
+   */
+  const developers = await all(
+    `SELECT freelancer AS name,
+            COUNT(*)                  AS appearances,
+            SUM(in_contact)           AS contacted,
+            SUM(pre_selected)         AS pre_selected,
+            SUM(proposal_selected)    AS selected,
+            MAX(rating)               AS rating,
+            MAX(projects_done)        AS projects_done,
+            MAX(category_jobs)        AS category_jobs,
+            MAX(rehirings)            AS rehirings,
+            MAX(is_hero)              AS is_hero,
+            MAX(ranking)              AS ranking,
+            MAX(avatar_url)           AS avatar_url,
+            MAX(profile_url)          AS profile_url
+       FROM job_insights
+      GROUP BY freelancer
+      ORDER BY COUNT(*) DESC, SUM(in_contact) DESC
+      LIMIT 40`,
+  );
+
   const topSkills = await all('SELECT skills FROM jobs WHERE skills IS NOT NULL');
   const tally = new Map();
   for (const r of topSkills) {
@@ -650,6 +682,8 @@ app.get('/api/stats', requireAuth, async (req, res) => {
     byDay: byDay.reverse(),
     byCountry,
     budgets,
+    // Marked here rather than in SQL so one shared table serves every member.
+    developers: developers.map((d) => ({ ...d, is_me: d.name === req.user.workana_name })),
     topSkills: [...tally.entries()].map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n).slice(0, 20),
   });
 });

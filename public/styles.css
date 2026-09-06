@@ -284,6 +284,29 @@ select.f-control {
 .j-time.fresh { color: var(--purple); font-weight: 600; }
 /* The drawer's "go to messages" link, on jobs this member has already bid on. */
 .btn-go { background: var(--green-soft); color: var(--green); border-color: transparent; }
+
+/* Statistics → the freelancers who keep appearing on the same projects. */
+.dev-head { float: right; font-weight: 400; font-size: 11px; color: var(--text-mute); letter-spacing: .02em; }
+.dev-list { display: flex; flex-direction: column; }
+.dev-row {
+  display: grid; align-items: center; gap: 10px;
+  grid-template-columns: 28px minmax(0, 1fr) 90px 42px 42px 48px;
+  padding: 6px 0; border-bottom: 1px solid var(--border-soft);
+}
+.dev-row.me { background: var(--green-soft); border-radius: 6px; padding-left: 6px; padding-right: 6px; }
+.dev-av {
+  width: 28px; height: 28px; border-radius: 50%; object-fit: cover;
+  background: var(--bg-sunken); border: 1px solid var(--border-soft);
+}
+.dev-main { min-width: 0; }
+.dev-name { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.dev-name a { color: inherit; text-decoration: none; }
+.dev-name a:hover { text-decoration: underline; }
+.dev-meta { font-size: 11px; color: var(--text-mute); display: flex; gap: 8px; flex-wrap: wrap; }
+.dev-bar .bar-track { width: 100%; }
+.dev-n { font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-soft); }
+.dev-n.contact { color: var(--accent); font-weight: 600; }
+.dev-n.rate { color: var(--text-mute); }
 /* Workana's own wording, shown when it gave no date we could turn into a stamp. */
 .j-time-guess { color: var(--text-mute); font-style: italic; }
 /* A client who answered in the last day is worth noticing. */

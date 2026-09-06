@@ -967,6 +967,54 @@ function bars(rows, labelKey, valueKey) {
     .join('');
 }
 
+/**
+ * The freelancers who keep turning up on the same projects, most frequent first.
+ *
+ * "Seen" is how many of the collected jobs they appeared on; "in contact" is how
+ * many of those the client actually engaged them for. The ratio between the two
+ * is the interesting part — someone on 40 projects who is never contacted is
+ * noise, someone on 6 who is contacted on 5 is the competition.
+ */
+function developerRows(devs) {
+  if (!devs?.length) {
+    return '<p class="hint">No contender data collected yet — insights are fetched per job as the scraper runs.</p>';
+  }
+  const max = Math.max(1, ...devs.map((d) => d.appearances || 0));
+
+  return `<div class="dev-list">${devs
+    .map((d) => {
+      const rate = d.appearances ? Math.round((d.contacted / d.appearances) * 100) : 0;
+      return `<div class="dev-row${d.is_me ? ' me' : ''}">
+        <img class="dev-av" src="${esc(d.avatar_url || AVATAR_PLACEHOLDER)}" alt="" loading="lazy"
+             onerror="${AVATAR_FALLBACK}">
+        <div class="dev-main">
+          <div class="dev-name">
+            ${
+              d.profile_url
+                ? `<a href="${esc(d.profile_url)}" target="_blank" rel="noopener">${esc(d.name)}</a>`
+                : esc(d.name)
+            }
+            ${d.is_me ? '<span class="badge-s sel">You</span>' : ''}
+            ${d.is_hero ? '<span class="badge-s hero">HERO</span>' : ''}
+          </div>
+          <div class="dev-meta">
+            ${d.rating ? `<span>${Number(d.rating).toFixed(2)}★</span>` : '<span>No rating</span>'}
+            ${d.projects_done ? `<span>${d.projects_done} done</span>` : ''}
+            ${d.rehirings ? `<span>${d.rehirings} rehired</span>` : ''}
+            ${d.ranking ? `<span>${esc(d.ranking)}</span>` : ''}
+          </div>
+        </div>
+        <div class="dev-bar" title="Seen on ${d.appearances} job(s)">
+          <div class="bar-track"><div class="bar-fill" style="width:${((d.appearances || 0) / max) * 100}%"></div></div>
+        </div>
+        <div class="dev-n" title="Jobs this freelancer appeared on">${d.appearances}</div>
+        <div class="dev-n contact" title="Jobs where the client was in contact with them">${d.contacted || 0}</div>
+        <div class="dev-n rate" title="Share of their appearances where the client engaged them">${rate}%</div>
+      </div>`;
+    })
+    .join('')}</div>`;
+}
+
 async function showStats() {
   const s = await (await fetch('/api/stats')).json();
   const maxDay = Math.max(1, ...s.byDay.map((d) => d.n));
@@ -988,6 +1036,12 @@ async function showStats() {
     <div class="section"><h3>By category</h3>${bars(s.byCategory, 'name', 'n')}</div>
     <div class="section"><h3>By client country</h3>${bars(s.byCountry, 'name', 'n')}</div>
     <div class="section"><h3>Most requested skills</h3>${bars(s.topSkills, 'name', 'n')}</div>
+    <div class="section">
+      <h3>Developers you compete with
+        <span class="dev-head">seen · in contact · rate</span>
+      </h3>
+      ${developerRows(s.developers)}
+    </div>
     <div style="text-align:right"><button class="btn" id="closeStats">Close</button></div>`;
 
   $('#statsBackdrop').hidden = false;

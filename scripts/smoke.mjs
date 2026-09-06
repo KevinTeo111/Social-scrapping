@@ -119,6 +119,13 @@ await check('drawer: job row', () =>
 await check('drawer: client reviews', () =>
   all('SELECT * FROM client_reviews ORDER BY id DESC LIMIT 25'),
 );
+await check('stats: developers', () =>
+  all(`SELECT freelancer AS name, COUNT(*) AS appearances, SUM(in_contact) AS contacted,
+              MAX(rating) AS rating, MAX(projects_done) AS projects_done,
+              MAX(is_hero) AS is_hero, MAX(ranking) AS ranking, MAX(avatar_url) AS avatar_url
+         FROM job_insights GROUP BY freelancer
+        ORDER BY COUNT(*) DESC, SUM(in_contact) DESC LIMIT 40`),
+);
 await check('status: backlog', () =>
   get(`SELECT
         (SELECT COUNT(*) FROM jobs WHERE detail_fetched_at IS NULL) AS details,
