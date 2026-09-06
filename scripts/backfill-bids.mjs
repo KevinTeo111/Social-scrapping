@@ -60,9 +60,31 @@ const pending = (
   )
 ).n;
 
+/*
+ * Jobs whose card button had turned into a link to the conversation. Those were
+ * read as "contacted, not bid" until that was recognised as a bid signal, so
+ * they are sitting in the overlay with has_own_bid = 0 and will not correct
+ * themselves until each is scraped again.
+ */
+const THREADED = `
+  bid_action_label IS NOT NULL
+  AND (LOWER(bid_action_label) LIKE '%messages%'
+    OR LOWER(bid_action_label) LIKE '%mensajes%'
+    OR LOWER(bid_action_label) LIKE '%mensagens%')
+`;
+const threaded = (
+  await get(
+    `SELECT COUNT(*) AS n FROM jobs j
+       JOIN user_jobs uj ON uj.job_slug = j.slug AND uj.user_id = ?
+      WHERE ${THREADED} AND COALESCE(uj.has_own_bid, 0) = 0`,
+    [user.id],
+  )
+).n;
+
 console.log(`account ${user.email} (id ${user.id})`);
 console.log(`  overlay now:  ${before.rows} row(s), ${before.bids ?? 0} bid, ${before.contacted ?? 0} contacted`);
 console.log(`  to adopt:     ${pending} job(s)`);
+console.log(`  open threads not marked as bids: ${threaded} job(s)`);
 
 if (!apply) {
   console.log('\nDry run. Re-run with --apply to write them.');
@@ -85,6 +107,15 @@ await run(
      was_contacted = GREATEST(user_jobs.was_contacted, excluded.was_contacted),
      updated_at    = excluded.updated_at`,
   [user.id, new Date().toISOString()],
+);
+
+// A conversation on the card means a proposal was sent; see OWN_BID_LABEL.
+await run(
+  `UPDATE user_jobs SET has_own_bid = 1, updated_at = ?
+    WHERE user_id = ?
+      AND COALESCE(has_own_bid, 0) = 0
+      AND job_slug IN (SELECT slug FROM jobs j WHERE ${THREADED})`,
+  [new Date().toISOString(), user.id],
 );
 
 const after = await get(

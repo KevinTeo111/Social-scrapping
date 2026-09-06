@@ -259,7 +259,9 @@ export function pageExtractDetail() {
     bidActionUrl: abs(bidBtn?.getAttribute('href')),
     // Kept in sync with OWN_BID_LABEL below; this runs inside the page, where
     // module scope is not available.
-    hasOwnBid: /improve|edit|melhorar|mejorar|ver\s+(propuesta|proposta)/i.test(text(bidBtn) || ''),
+    hasOwnBid: /improve|edit|melhorar|mejorar|ver\s+(propuesta|proposta)|messages|mensajes|mensagens/i.test(
+      text(bidBtn) || '',
+    ),
     bids: activity.find((a) => /bids/i.test(a.label || ''))?.value ?? null,
     interested: activity.find((a) => /interested/i.test(a.label || ''))?.value ?? null,
     client: {
@@ -549,14 +551,18 @@ export function parseAbsoluteDate(text) {
 
 /**
  * The bid button's label is what betrays that this account already bid: it reads
- * "Place a bid" to everyone else and "Improve proposal" to the bidder. Workana
- * serves the board in three languages, so all three wordings are matched.
+ * "Place a bid" to everyone else, and something else entirely to the bidder.
+ * Workana serves the board in three languages, so all three wordings are matched.
  *
- * Deliberately absent: "Go to messages", which replaces the button once a
- * conversation exists. A client can open one by inviting a freelancer who never
- * bid, so it proves contact, not a proposal — that is what `wasContacted` is for.
+ * "Go to messages" counts too, though it took a real miss to establish that.
+ * It replaces the button once a conversation exists, and the reasoning for
+ * leaving it out — that a client can open a thread by inviting someone who never
+ * bid — is true but rare, while the jobs it silently excluded were the ones
+ * furthest along: bid, then answered. An invitation now reads as a bid, which is
+ * the far cheaper error of the two.
  */
-export const OWN_BID_LABEL = /improve|edit|melhorar|mejorar|ver\s+(propuesta|proposta)/i;
+export const OWN_BID_LABEL =
+  /improve|edit|melhorar|mejorar|ver\s+(propuesta|proposta)|messages|mensajes|mensagens/i;
 
 /** Turns a raw list card into the shape `upsertJob` expects. */
 export function normaliseListJob(raw, now = Date.now()) {

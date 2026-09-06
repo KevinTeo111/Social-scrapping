@@ -20,6 +20,7 @@ import {
   startRun,
   finishRun,
 } from '../db.js';
+import { findUser } from '../auth.js';
 
 /**
  * Only one scrape at a time, across all accounts. Several members each driving
@@ -382,8 +383,27 @@ export async function fetchInsightsOn(page, slug, userId = null) {
   const raw = await page.evaluate(pageExtractInsights);
   await saveInsights(slug, raw);
 
-  // "Your budget" is what *this* account proposed — not a property of the job.
-  if (userId && raw.ownBudget) await upsertUserJob(userId, slug, { ownBudget: raw.ownBudget, hasOwnBid: true });
+  /*
+   * Two independent proofs that this account bid, neither of which is a property
+   * of the job — they are true of whoever's session fetched the page.
+   *
+   * "Your budget" is the panel Workana shows only to the bidder. Appearing in
+   * the contender list under your own display name is the other, and it catches
+   * projects where the panel is missing or worded in a language the parser has
+   * not seen. Both beat reading the button label, which is a guess by comparison.
+   */
+  if (userId) {
+    const me = (await findUser(userId))?.workana_name;
+    const amContender =
+      me && raw.proposals?.some((p) => p.freelancer && p.freelancer.trim() === me.trim());
+
+    if (raw.ownBudget || amContender) {
+      await upsertUserJob(userId, slug, {
+        ownBudget: raw.ownBudget ?? undefined,
+        hasOwnBid: true,
+      });
+    }
+  }
 
   return raw;
 }
