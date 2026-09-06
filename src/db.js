@@ -177,6 +177,7 @@ const COALESCE_COLUMNS = [
   'avg_bid_rate',
   'status_label',
   'bid_action_label',
+  'bid_action_url',
   'client_id',
   'detail_fetched_at',
   // Refreshed whenever the card shows one; a later scrape that omits it keeps
@@ -213,9 +214,9 @@ export async function upsertJob(job) {
        detail_fetched_at, budget_text, currency, budget_min, budget_max, is_hourly, budget_is_max,
        summary, description, skills, category, category_slug, subcategory, subcategory_slug,
        project_size, project_duration, language, bids, interested, avg_bid_rate, status_label,
-       is_featured, is_max_highlighted, has_own_bid, bid_action_label, was_contacted, client_id, raw,
-       last_reply_text, last_reply_at
-     ) VALUES (${seqValue}?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       is_featured, is_max_highlighted, has_own_bid, bid_action_label, bid_action_url, was_contacted,
+       client_id, raw, last_reply_text, last_reply_at
+     ) VALUES (${seqValue}?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(slug) DO UPDATE SET
        url                = excluded.url,
        title              = excluded.title,
@@ -271,6 +272,7 @@ export async function upsertJob(job) {
       job.isMaxHighlighted ? 1 : 0,
       job.hasOwnBid ? 1 : 0,
       job.bidActionLabel ?? null,
+      job.bidActionUrl ?? null,
       job.wasContacted ? 1 : 0,
       job.clientId ?? null,
       JSON.stringify(job.raw ?? job),

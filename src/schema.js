@@ -103,6 +103,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   -- seeded from; see adoptLegacyData().
   has_own_bid         ${T.int} DEFAULT 0,
   bid_action_label    ${T.text},
+  -- Where Workana's own button on the card points. Once you have bid it leads
+  -- into the conversation, and it is the only link to that thread we ever see.
+  bid_action_url      ${T.text},
   was_contacted       ${T.int} DEFAULT 0,
 
   contacts_count      ${T.int},
@@ -278,6 +281,7 @@ export const LATE_COLUMNS = [
   ['jobs', 'last_reply_text', T.text],
   ['jobs', 'last_reply_at', T.text],
   ['jobs', 'seq', T.seq],
+  ['jobs', 'bid_action_url', T.text],
   ['scrape_runs', 'insights', `${T.int} DEFAULT 0`],
   ['scrape_runs', 'user_id', T.int],
   ['users', 'workana_proxy', T.text],

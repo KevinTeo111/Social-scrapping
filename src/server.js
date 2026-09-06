@@ -455,7 +455,7 @@ const SELECT_COLUMNS = `
   j.budget_text, j.currency, j.budget_min, j.budget_max, j.is_hourly, j.budget_is_max,
   j.summary, j.skills, j.category, j.category_slug, j.subcategory, j.subcategory_slug,
   j.project_size, j.project_duration, j.bids, j.interested, j.avg_bid_rate, j.status_label,
-  j.is_featured, j.is_max_highlighted, j.bid_action_label,
+  j.is_featured, j.is_max_highlighted, j.bid_action_label, j.bid_action_url,
   COALESCE(uf.has_own_bid, 0)   AS has_own_bid,
   COALESCE(uf.was_contacted, 0) AS was_contacted,
   uf.own_budget,

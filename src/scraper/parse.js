@@ -118,6 +118,9 @@ export function pageExtractList() {
         .trim(),
       budgetText: text(card.querySelector('.project-actions .budget .values span')),
       bidActionLabel: text(card.querySelector('.project-actions .btn-group a')),
+      // Where that button actually goes. Once you have bid it becomes the way
+      // into the conversation, which is the only link to the thread we ever see.
+      bidActionUrl: abs(card.querySelector('.project-actions .btn-group a')?.getAttribute('href')),
       isFeatured: card.classList.contains('project-item-featured'),
       isMaxHighlighted: Boolean(card.querySelector('.icon-workana, .featured-block')),
       lastReplyText,
@@ -253,6 +256,7 @@ export function pageExtractDetail() {
     })),
     isFeatured: Boolean(root.querySelector('aside .featured-block')),
     bidActionLabel: text(bidBtn),
+    bidActionUrl: abs(bidBtn?.getAttribute('href')),
     // Kept in sync with OWN_BID_LABEL below; this runs inside the page, where
     // module scope is not available.
     hasOwnBid: /improve|edit|melhorar|mejorar|ver\s+(propuesta|proposta)/i.test(text(bidBtn) || ''),
@@ -574,6 +578,7 @@ export function normaliseListJob(raw, now = Date.now()) {
     isMaxHighlighted: Boolean(raw.isMaxHighlighted),
     wasContacted: Boolean(raw.wasContacted),
     bidActionLabel: raw.bidActionLabel || null,
+    bidActionUrl: raw.bidActionUrl || null,
     hasOwnBid: OWN_BID_LABEL.test(raw.bidActionLabel || ''),
     clientId: raw.client?.id || null,
     client: raw.client?.id
@@ -607,6 +612,7 @@ export function normaliseDetail(raw) {
     skills: raw.skills?.filter((s) => s.name) ?? [],
     isFeatured: Boolean(raw.isFeatured),
     bidActionLabel: raw.bidActionLabel || null,
+    bidActionUrl: raw.bidActionUrl || null,
     hasOwnBid: Boolean(raw.hasOwnBid),
     bids: INT(raw.bids),
     interested: INT(raw.interested),

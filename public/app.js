@@ -597,6 +597,56 @@ function closeDrawer() {
   document.querySelectorAll('tr.is-open').forEach((r) => r.classList.remove('is-open'));
 }
 
+/** The whole job as plain text, for the drawer's Copy details button. */
+function jobAsText({ job, insights = [] }) {
+  const contacted = insights.filter((p) => p.in_contact);
+  const line = (label, value) => (value === null || value === undefined || value === '' ? null : `${label}: ${value}`);
+  // `skills` arrives already parsed from the API, as [{name, slug}].
+  const skills = (job.skills || []).map((s) => s.name);
+
+  return [
+    job.title,
+    job.url,
+    '',
+    line('Posted', hasPostedDate(job) ? fullStamp(postedAt(job)) : job.published_text || 'unknown'),
+    line('Budget', job.budget_text || shortBudget(job)),
+    line('Type', job.is_hourly ? 'Hourly' : 'Fixed price'),
+    line('Category', [job.category, job.subcategory].filter(Boolean).join(' › ')),
+    line('Project size', job.project_size),
+    line('Duration', job.project_duration),
+    line('Skills', skills.join(', ')),
+    '',
+    line('Bids', job.bids ?? 0),
+    line('Interested', job.interested),
+    line('In contact', job.contacts_count ?? contacted.length),
+    line('Average bid', job.avg_bid_rate),
+    line('Status', job.status_label),
+    line('Last client reply', job.last_reply_at ? `${timeAgo(job.last_reply_at)} (${fullStamp(job.last_reply_at)})` : 'none'),
+    '',
+    'CLIENT',
+    line('Name', job.client_name),
+    line('Country', job.client_country),
+    line('Rating', job.client_rating ? `${Number(job.client_rating).toFixed(2)} / 5` : 'no feedback yet'),
+    line('Hire rate', job.client_hire_rate === null || job.client_hire_rate === undefined
+      ? null
+      : `${Math.round(job.client_hire_rate)}% (${job.client_paid ?? 0} paid of ${job.client_published ?? 0} posted)`),
+    line('Payment method', job.client_verified ? 'verified' : 'not verified'),
+    line('Profile', job.client_profile_url),
+    contacted.length
+      ? `\nIN CONTACT WITH\n${contacted
+          .map(
+            (p) =>
+              `- ${p.freelancer}${p.rating ? ` · ${Number(p.rating).toFixed(2)}★` : ''}` +
+              `${p.projects_done ? ` · ${p.projects_done} done` : ''}${p.ranking ? ` · ${p.ranking}` : ''}`,
+          )
+          .join('\n')}`
+      : null,
+    job.description ? `\nDESCRIPTION\n${job.description}` : null,
+  ]
+    .filter((l) => l !== null)
+    .join('\n');
+}
+
 function kv(label, value, big) {
   if (value === null || value === undefined || value === '') return '';
   return `<div class="kv"><label>${esc(label)}</label><div class="v${big ? ' big' : ''}">${value}</div></div>`;
@@ -711,6 +761,19 @@ function drawerHtml({ job, reviews, insights, otherJobs }) {
       ${job.has_own_bid ? '<span class="pill mine">✓ You bid on this</span>' : ''}
       ${contacted.length ? `<span class="pill hot">${contacted.length} in contact</span>` : ''}
       <a class="btn btn-primary" href="${esc(job.url)}" target="_blank" rel="noopener">Open on Workana ↗</a>
+      ${
+        /*
+         * Once you have bid, the useful next action is the conversation, not the
+         * posting. Workana's own button on the card becomes the way into that
+         * thread, and its href is the only link to it we ever see — so it is
+         * used when a scrape has captured it, and the inbox is the fallback for
+         * jobs collected before that was stored.
+         */
+        job.has_own_bid
+          ? `<a class="btn btn-go" href="${esc(job.bid_action_url || 'https://www.workana.com/messages')}"
+                target="_blank" rel="noopener">💬 Go to messages ↗</a>`
+          : '<button class="btn" data-copy>📋 Copy details</button>'
+      }
       <button class="btn" data-star>${job.starred ? '★ Starred' : '☆ Star'}</button>
       <button class="btn" data-insights>⚡ Refresh contacts</button>
     </div>
@@ -810,6 +873,34 @@ function wireDrawer(drawer, data) {
     });
     toast('Note saved');
   };
+
+  /*
+   * Everything worth pasting into a proposal draft, in one go: what the job
+   * asks for, what the client is like, and who you are up against. Plain text
+   * rather than JSON because it is going into a message or a notes file.
+   */
+  const copyBtn = drawer.querySelector('[data-copy]');
+  if (copyBtn) {
+    copyBtn.onclick = async () => {
+      const text = jobAsText(data);
+      try {
+        await navigator.clipboard.writeText(text);
+        copyBtn.textContent = '✓ Copied';
+        setTimeout(() => (copyBtn.textContent = '📋 Copy details'), 2000);
+      } catch {
+        // Clipboard access needs a secure context and can be refused outright;
+        // selecting the text is the fallback that always works.
+        const box = document.createElement('textarea');
+        box.value = text;
+        box.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+        document.body.appendChild(box);
+        box.select();
+        const ok = document.execCommand?.('copy');
+        box.remove();
+        toast(ok ? 'Copied to clipboard' : 'Could not copy — check clipboard permissions');
+      }
+    };
+  }
 
   const btn = drawer.querySelector('[data-insights]');
   btn.onclick = async () => {
