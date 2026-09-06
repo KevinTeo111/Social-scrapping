@@ -61,6 +61,15 @@ const defaultLanes = () => lanesForMemory(memoryLimitBytes());
 export const config = {
   rootDir,
   cookieFile: process.env.COOKIE_FILE || path.join(rootDir, 'Hiyashi.json'),
+  /*
+   * Set DATABASE_URL and everything — the corpus, every account, their encrypted
+   * Workana sessions and their browser state — lives in Postgres, which is what
+   * makes a redeploy survivable on a platform that erases the filesystem.
+   * Railway injects this automatically once a Postgres service is attached.
+   * Without it the SQLite file below is used, so a workstation needs no server.
+   */
+  databaseUrl: process.env.DATABASE_URL || '',
+  dbPoolSize: num(process.env.DB_POOL_SIZE, 8),
   dbFile: process.env.DB_FILE || path.join(rootDir, 'data', 'workana.db'),
   storageState: path.join(rootDir, 'data', 'storage-state.json'),
   debugDir: path.join(rootDir, 'data', 'debug'),
