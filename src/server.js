@@ -3,7 +3,7 @@ import path from 'node:path';
 import express from 'express';
 import { config } from './config.js';
 import { loadWorkanaCookies, hasSessionCookie, describeSession } from './cookies.js';
-import { all, get, lastRun, upsertUserJob, adoptLegacyData, initDatabase } from './db.js';
+import { all, get, lastRun, upsertUserJob, adoptLegacyData, initDatabase, isPostgres } from './db.js';
 import {
   scrape,
   isScraping,
@@ -303,19 +303,35 @@ const SORTS = {
 };
 
 /**
- * Escapes a user's words for FTS5. Anything the user types is treated as a bag of
- * quoted terms with a prefix match on the last one, which avoids FTS5 syntax
- * errors on stray quotes/operators while still feeling like a search box.
+ * Turns what the user typed into a search expression for whichever engine is
+ * underneath.
+ *
+ * Both are given the same treatment: a bag of terms, all required, with a prefix
+ * match on the last so results narrow as you type. Quoting every term is what
+ * keeps a stray apostrophe or bracket from being read as syntax — FTS5 and
+ * Postgres both have operator languages that a search box should never expose.
  */
-function ftsQuery(raw) {
+function searchTerms(raw) {
   const terms = String(raw)
     .toLowerCase()
-    .replace(/["*()]/g, ' ')
+    .replace(/["*()&|!:]/g, ' ')
     .split(/\s+/)
     .filter(Boolean);
-  if (!terms.length) return null;
-  return terms.map((t, i) => (i === terms.length - 1 ? `"${t}"*` : `"${t}"`)).join(' AND ');
+  return terms.length ? terms : null;
 }
+
+const ftsQuery = (raw) => {
+  const terms = searchTerms(raw);
+  if (!terms) return null;
+  return terms.map((t, i) => (i === terms.length - 1 ? `"${t}"*` : `"${t}"`)).join(' AND ');
+};
+
+/** `web & development:*` — the tsquery equivalent of the above. */
+const tsQuery = (raw) => {
+  const terms = searchTerms(raw);
+  if (!terms) return null;
+  return terms.map((t, i) => (i === terms.length - 1 ? `${t}:*` : t)).join(' & ');
+};
 
 function buildQuery(q, userId) {
   const where = [];
@@ -323,12 +339,24 @@ function buildQuery(q, userId) {
   const params = [userId ?? -1];
   let join = '';
 
+  /*
+   * Postgres searches the row itself through its generated tsvector, so there is
+   * nothing to join. SQLite's FTS5 index is a separate table and has to be.
+   */
   if (q.search) {
-    const match = ftsQuery(q.search);
-    if (match) {
-      join += ' JOIN jobs_fts f ON f.slug = j.slug ';
-      where.push('jobs_fts MATCH ?');
-      params.push(match);
+    if (isPostgres) {
+      const match = tsQuery(q.search);
+      if (match) {
+        where.push("j.search @@ to_tsquery('simple', ?)");
+        params.push(match);
+      }
+    } else {
+      const match = ftsQuery(q.search);
+      if (match) {
+        join += ' JOIN jobs_fts f ON f.slug = j.slug ';
+        where.push('jobs_fts MATCH ?');
+        params.push(match);
+      }
     }
   }
 
@@ -421,7 +449,7 @@ const BASE_FROM = `
 `;
 
 const SELECT_COLUMNS = `
-  j.rowid AS no,
+  j.seq AS no,
   j.slug, j.url, j.title, j.published_text, j.published_at, j.published_approx_at,
   j.first_seen_at, j.last_seen_at, j.detail_fetched_at,
   j.budget_text, j.currency, j.budget_min, j.budget_max, j.is_hourly, j.budget_is_max,
@@ -569,8 +597,10 @@ app.get('/api/stats', requireAuth, async (req, res) => {
 
   const byCategory = await all(
       `SELECT COALESCE(category,'Unknown') AS name, COUNT(*) AS n,
-              ROUND(AVG(COALESCE(budget_max, budget_min)), 0) AS avg_budget,
-              ROUND(AVG(COALESCE(bids,0)), 1) AS avg_bids
+              -- Postgres has round(numeric, int) but no round(double, int), and
+              -- AVG over these columns is a double. The cast satisfies both.
+              ROUND(CAST(AVG(COALESCE(budget_max, budget_min)) AS NUMERIC), 0) AS avg_budget,
+              ROUND(CAST(AVG(COALESCE(bids,0)) AS NUMERIC), 1) AS avg_bids
          FROM jobs GROUP BY COALESCE(category,'Unknown') ORDER BY n DESC LIMIT 15`,
     );
 
@@ -588,8 +618,8 @@ app.get('/api/stats', requireAuth, async (req, res) => {
 
   const budgets = await all(
       `SELECT is_hourly,
-              ROUND(AVG(COALESCE(budget_min, budget_max)),0) AS avg_min,
-              ROUND(AVG(COALESCE(budget_max, budget_min)),0) AS avg_max,
+              ROUND(CAST(AVG(COALESCE(budget_min, budget_max)) AS NUMERIC),0) AS avg_min,
+              ROUND(CAST(AVG(COALESCE(budget_max, budget_min)) AS NUMERIC),0) AS avg_max,
               MAX(COALESCE(budget_max, budget_min)) AS max
          FROM jobs GROUP BY is_hourly`,
     );
