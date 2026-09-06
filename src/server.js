@@ -3,7 +3,7 @@ import path from 'node:path';
 import express from 'express';
 import { config } from './config.js';
 import { loadWorkanaCookies, hasSessionCookie, describeSession } from './cookies.js';
-import { db, lastRun, upsertUserJob, adoptLegacyData } from './db.js';
+import { all, get, lastRun, upsertUserJob, adoptLegacyData, initDatabase } from './db.js';
 import {
   scrape,
   isScraping,
@@ -35,6 +35,7 @@ import {
   getWorkanaProxy,
   findUser,
   requireAdmin,
+  scrapeCandidates,
 } from './auth.js';
 
 const app = express();
@@ -88,18 +89,18 @@ const setSessionCookie = (req, res, token, expires) => {
  */
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
-app.get('/api/me', (req, res) => {
+app.get('/api/me', async (req, res) => {
   res.json({
     user: publicUser(req.user),
     registrationOpen: config.allowRegistration,
-    needsBootstrap: userCount() === 0,
+    needsBootstrap: (await userCount()) === 0,
   });
 });
 
-app.post('/api/register', (req, res) => {
+app.post('/api/register', async (req, res) => {
   try {
     const { email, password, name, inviteCode } = req.body || {};
-    const first = userCount() === 0;
+    const first = (await userCount()) === 0;
 
     // The very first account always may be created, otherwise a fresh install
     // could lock itself out; after that the operator's settings apply.
@@ -110,12 +111,12 @@ app.post('/api/register', (req, res) => {
       }
     }
 
-    const user = registerUser({ email, password, name });
+    const user = await registerUser({ email, password, name });
     if (first) {
       // Inheriting the pre-accounts history is a convenience; never let it
       // fail the registration that just succeeded.
       try {
-        const adopted = adoptLegacyData(user.id);
+        const adopted = await adoptLegacyData(user.id);
         if (adopted.flags || adopted.bids) {
           console.log(`[auth] Adopted pre-existing data (${adopted.bids} bid flags, ${adopted.flags} stars/notes).`);
         }
@@ -124,7 +125,7 @@ app.post('/api/register', (req, res) => {
       }
     }
 
-    const { token, expires } = createSession(user.id);
+    const { token, expires } = await createSession(user.id);
     setSessionCookie(req, res, token, expires);
     res.json({ user: publicUser(user) });
   } catch (err) {
@@ -132,10 +133,10 @@ app.post('/api/register', (req, res) => {
   }
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   try {
-    const user = authenticate(req.body?.email, req.body?.password);
-    const { token, expires } = createSession(user.id);
+    const user = await authenticate(req.body?.email, req.body?.password);
+    const { token, expires } = await createSession(user.id);
     setSessionCookie(req, res, token, expires);
     res.json({ user: publicUser(user) });
   } catch (err) {
@@ -143,16 +144,16 @@ app.post('/api/login', (req, res) => {
   }
 });
 
-app.post('/api/logout', (req, res) => {
-  destroySession(req.sessionToken);
+app.post('/api/logout', async (req, res) => {
+  await destroySession(req.sessionToken);
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
   res.json({ ok: true });
 });
 
-app.post('/api/password', requireAuth, (req, res) => {
+app.post('/api/password', requireAuth, async (req, res) => {
   try {
-    changePassword(req.user.id, req.body?.currentPassword, req.body?.newPassword);
-    const { token, expires } = createSession(req.user.id);
+    await changePassword(req.user.id, req.body?.currentPassword, req.body?.newPassword);
+    const { token, expires } = await createSession(req.user.id);
     setSessionCookie(req, res, token, expires);
     res.json({ ok: true });
   } catch (err) {
@@ -164,11 +165,11 @@ app.post('/api/password', requireAuth, (req, res) => {
 /* Each member's own Workana session                                   */
 /* ------------------------------------------------------------------ */
 
-app.post('/api/session/cookies', requireAuth, (req, res) => {
+app.post('/api/session/cookies', requireAuth, async (req, res) => {
   try {
     const raw = req.body?.cookies;
     if (!raw || typeof raw !== 'string') throw new AuthError('Paste the exported cookie JSON.');
-    const result = setWorkanaCookies(req.user.id, raw);
+    const result = await setWorkanaCookies(req.user.id, raw);
     res.json({
       ok: true,
       ...result,
@@ -179,8 +180,8 @@ app.post('/api/session/cookies', requireAuth, (req, res) => {
   }
 });
 
-app.delete('/api/session/cookies', requireAuth, (req, res) => {
-  clearWorkanaCookies(req.user.id);
+app.delete('/api/session/cookies', requireAuth, async (req, res) => {
+  await clearWorkanaCookies(req.user.id);
   res.json({ ok: true });
 });
 
@@ -219,11 +220,11 @@ app.get('/api/session/file', requireAuth, (req, res) => {
   res.json(describeCookieFile());
 });
 
-app.post('/api/session/file', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/session/file', requireAuth, requireAdmin, async (req, res) => {
   try {
     const file = path.resolve(config.cookieFile);
     if (!fs.existsSync(file)) throw new AuthError(`No cookie file at ${file}.`);
-    const result = setWorkanaCookies(req.user.id, fs.readFileSync(file, 'utf8'));
+    const result = await setWorkanaCookies(req.user.id, fs.readFileSync(file, 'utf8'));
     res.json({
       ok: true,
       file,
@@ -240,9 +241,9 @@ app.post('/api/session/file', requireAuth, requireAdmin, (req, res) => {
  * so a member in another region needs their own exit or their session is driven
  * from the host's IP — see the README on remote members.
  */
-app.post('/api/session/proxy', requireAuth, (req, res) => {
+app.post('/api/session/proxy', requireAuth, async (req, res) => {
   try {
-    const described = setWorkanaProxy(req.user.id, req.body?.proxy);
+    const described = await setWorkanaProxy(req.user.id, req.body?.proxy);
     res.json({ ok: true, proxy: described });
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message });
@@ -251,18 +252,18 @@ app.post('/api/session/proxy', requireAuth, (req, res) => {
 
 /** Opens Workana with this member's cookies and reports whether they still work. */
 app.post('/api/session/verify', requireAuth, async (req, res) => {
-  const cookies = getWorkanaCookies(req.user.id);
+  const cookies = await getWorkanaCookies(req.user.id);
   if (!cookies) return res.status(400).json({ error: 'No Workana session stored yet.' });
   try {
     const result = await checkLogin({
       cookies,
       userId: req.user.id,
-      proxy: getWorkanaProxy(req.user.id),
+      proxy: await getWorkanaProxy(req.user.id),
     });
-    recordCookieCheck(req.user.id, { valid: result.loggedIn, workanaName: result.user });
+    await recordCookieCheck(req.user.id, { valid: result.loggedIn, workanaName: result.user });
     res.json(result);
   } catch (err) {
-    recordCookieCheck(req.user.id, { valid: false });
+    await recordCookieCheck(req.user.id, { valid: false });
     res.status(502).json({ error: err.message });
   }
 });
@@ -442,7 +443,7 @@ const SELECT_COLUMNS = `
   COALESCE(uf.starred, 0) AS starred, COALESCE(uf.hidden, 0) AS hidden, uf.note
 `;
 
-app.get('/api/jobs', requireAuth, (req, res) => {
+app.get('/api/jobs', requireAuth, async (req, res) => {
   try {
     const q = req.query;
     const uid = req.user.id;
@@ -451,22 +452,21 @@ app.get('/api/jobs', requireAuth, (req, res) => {
     const limit = Math.min(Number(q.limit) || 50, 200);
     const offset = Math.max(Number(q.offset) || 0, 0);
 
-    const total = db.prepare(`SELECT COUNT(*) n ${BASE_FROM} ${join} ${where}`).get(...params).n;
-    const rows = db
-      .prepare(`SELECT ${SELECT_COLUMNS} ${BASE_FROM} ${join} ${where} ${order} LIMIT ? OFFSET ?`)
-      .all(...params, limit, offset);
+    const total = (await get(`SELECT COUNT(*) AS n ${BASE_FROM} ${join} ${where}`, params)).n;
+    const rows = await all(
+      `SELECT ${SELECT_COLUMNS} ${BASE_FROM} ${join} ${where} ${order} LIMIT ? OFFSET ?`,
+      [...params, limit, offset],
+    );
 
     // Tab counts respect every filter except the contract type itself.
-    const tabQ = { ...q, type: undefined };
-    const tab = buildQuery(tabQ, uid);
-    const counts = db
-      .prepare(
-        `SELECT COUNT(*) AS all_count,
-                SUM(CASE WHEN j.is_hourly = 1 THEN 1 ELSE 0 END) AS hourly,
-                SUM(CASE WHEN j.is_hourly = 0 THEN 1 ELSE 0 END) AS fixed
-         ${BASE_FROM} ${tab.join} ${tab.where}`,
-      )
-      .get(...tab.params);
+    const tab = buildQuery({ ...q, type: undefined }, uid);
+    const counts = await get(
+      `SELECT COUNT(*) AS all_count,
+              SUM(CASE WHEN j.is_hourly = 1 THEN 1 ELSE 0 END) AS hourly,
+              SUM(CASE WHEN j.is_hourly = 0 THEN 1 ELSE 0 END) AS fixed
+       ${BASE_FROM} ${tab.join} ${tab.where}`,
+      tab.params,
+    );
 
     res.json({ total, limit, offset, counts, jobs: rows.map(jsonSafe) });
   } catch (err) {
@@ -474,35 +474,41 @@ app.get('/api/jobs', requireAuth, (req, res) => {
   }
 });
 
-app.get('/api/jobs/:slug', requireAuth, (req, res) => {
-  const job = db
-    .prepare(`SELECT ${SELECT_COLUMNS}, j.description, j.raw ${BASE_FROM} WHERE j.slug = ?`)
-    .get(req.user.id, req.params.slug);
+app.get('/api/jobs/:slug', requireAuth, async (req, res) => {
+  const job = await get(`SELECT ${SELECT_COLUMNS}, j.description, j.raw ${BASE_FROM} WHERE j.slug = ?`, [
+    req.user.id,
+    req.params.slug,
+  ]);
   if (!job) return res.status(404).json({ error: 'Not found' });
 
   const reviews = job.client_id
-    ? db
-        .prepare('SELECT * FROM client_reviews WHERE client_id = ? ORDER BY id DESC LIMIT 25')
-        .all(job.client_id)
+    ? await all('SELECT * FROM client_reviews WHERE client_id = ? ORDER BY id DESC LIMIT 25', [
+        job.client_id,
+      ])
     : [];
-  // Contacted freelancers first — they are the headline of the drawer.
-  // `is_self` is resolved against the viewer's own Workana display name rather
-  // than stored, so one shared contender list serves every member correctly.
+  /*
+   * Contacted freelancers first — they are the headline of the drawer.
+   *
+   * `is_self` is resolved against the viewer's own Workana display name rather
+   * than stored, so one shared contender list serves every member correctly. The
+   * comparison is spelled as CASE WHEN because Postgres yields a boolean where
+   * SQLite yields 0/1, and the ordering below is arithmetic.
+   */
   const me = req.user.workana_name;
-  const insights = db
-    .prepare(
-      `SELECT *, (freelancer = ?) AS is_self FROM job_insights WHERE job_slug = ?
-        ORDER BY in_contact DESC, proposal_selected DESC, is_self DESC,
-                 is_hero DESC, COALESCE(rating, 0) DESC`,
-    )
-    .all(me ?? ' ', req.params.slug);
+  const insights = await all(
+    `SELECT *, CASE WHEN freelancer = ? THEN 1 ELSE 0 END AS is_self
+       FROM job_insights WHERE job_slug = ?
+      ORDER BY in_contact DESC, proposal_selected DESC, is_self DESC,
+               is_hero DESC, COALESCE(rating, 0) DESC`,
+    [me ?? '', req.params.slug],
+  );
+
   const otherJobs = job.client_id
-    ? db
-        .prepare(
-          `SELECT slug, title, budget_text, bids, published_text FROM jobs
-            WHERE client_id = ? AND slug != ? ORDER BY first_seen_at DESC LIMIT 10`,
-        )
-        .all(job.client_id, req.params.slug)
+    ? await all(
+        `SELECT slug, title, budget_text, bids, published_text FROM jobs
+          WHERE client_id = ? AND slug != ? ORDER BY first_seen_at DESC LIMIT 10`,
+        [job.client_id, req.params.slug],
+      )
     : [];
 
   res.json({ job: jsonSafe(job), reviews, insights, otherJobs });
@@ -515,30 +521,24 @@ app.get('/api/jobs/:slug', requireAuth, (req, res) => {
 // NOTE: `GROUP BY <alias>` is a trap here -- SQLite binds the name to a real
 // column when one exists, and both `jobs.slug` and `clients.name` collide with
 // the aliases these queries want. Always group by the underlying expression.
-app.get('/api/facets', requireAuth, (_req, res) => {
-  const categories = db
-    .prepare(
+app.get('/api/facets', requireAuth, async (_req, res) => {
+  const categories = await all(
       `SELECT COALESCE(category, 'Uncategorised') AS name, category_slug AS slug, COUNT(*) AS n
          FROM jobs GROUP BY COALESCE(category, 'Uncategorised'), category_slug ORDER BY n DESC`,
-    )
-    .all();
-  const subcategories = db
-    .prepare(
+    );
+  const subcategories = await all(
       `SELECT subcategory AS name, category AS parent, COUNT(*) AS n FROM jobs
         WHERE subcategory IS NOT NULL GROUP BY subcategory, category ORDER BY n DESC LIMIT 120`,
-    )
-    .all();
-  const countries = db
-    .prepare(
+    );
+  const countries = await all(
       `SELECT c.country AS name, c.country_code AS code, COUNT(*) AS n
          FROM jobs j JOIN clients c ON c.id = j.client_id
         WHERE c.country IS NOT NULL GROUP BY c.country, c.country_code ORDER BY n DESC`,
-    )
-    .all();
+    );
 
   // Skills live inside a JSON blob, so tally them in JS rather than SQL.
   const tally = new Map();
-  for (const row of db.prepare('SELECT skills FROM jobs WHERE skills IS NOT NULL').all()) {
+  for (const row of await all('SELECT skills FROM jobs WHERE skills IS NOT NULL')) {
     let list = [];
     try {
       list = JSON.parse(row.skills);
@@ -555,9 +555,8 @@ app.get('/api/facets', requireAuth, (_req, res) => {
   res.json({ categories, subcategories, countries, skills });
 });
 
-app.get('/api/stats', requireAuth, (req, res) => {
-  const totals = db
-    .prepare(
+app.get('/api/stats', requireAuth, async (req, res) => {
+  const totals = await get(
       `SELECT COUNT(*) AS jobs,
               SUM(CASE WHEN is_hourly=1 THEN 1 ELSE 0 END) AS hourly,
               SUM(CASE WHEN is_hourly=0 THEN 1 ELSE 0 END) AS fixed,
@@ -565,45 +564,37 @@ app.get('/api/stats', requireAuth, (req, res) => {
               SUM(CASE WHEN COALESCE(bids,0)=0 THEN 1 ELSE 0 END) AS no_bids,
               (SELECT COUNT(*) FROM user_jobs WHERE user_id = ? AND has_own_bid = 1) AS own_bids
          FROM jobs`,
-    )
-    .get(req.user.id);
+      [req.user.id],
+    );
 
-  const byCategory = db
-    .prepare(
+  const byCategory = await all(
       `SELECT COALESCE(category,'Unknown') AS name, COUNT(*) AS n,
               ROUND(AVG(COALESCE(budget_max, budget_min)), 0) AS avg_budget,
               ROUND(AVG(COALESCE(bids,0)), 1) AS avg_bids
          FROM jobs GROUP BY COALESCE(category,'Unknown') ORDER BY n DESC LIMIT 15`,
-    )
-    .all();
+    );
 
-  const byDay = db
-    .prepare(
+  const byDay = await all(
       `SELECT substr(COALESCE(published_approx_at, published_at, first_seen_at), 1, 10) AS day,
               COUNT(*) AS n
          FROM jobs GROUP BY day ORDER BY day DESC LIMIT 21`,
-    )
-    .all();
+    );
 
-  const byCountry = db
-    .prepare(
+  const byCountry = await all(
       `SELECT c.country AS name, c.country_code AS code, COUNT(*) AS n
          FROM jobs j JOIN clients c ON c.id=j.client_id
         WHERE c.country IS NOT NULL GROUP BY c.country, c.country_code ORDER BY n DESC LIMIT 12`,
-    )
-    .all();
+    );
 
-  const budgets = db
-    .prepare(
+  const budgets = await all(
       `SELECT is_hourly,
               ROUND(AVG(COALESCE(budget_min, budget_max)),0) AS avg_min,
               ROUND(AVG(COALESCE(budget_max, budget_min)),0) AS avg_max,
               MAX(COALESCE(budget_max, budget_min)) AS max
          FROM jobs GROUP BY is_hourly`,
-    )
-    .all();
+    );
 
-  const topSkills = db.prepare('SELECT skills FROM jobs WHERE skills IS NOT NULL').all();
+  const topSkills = await all('SELECT skills FROM jobs WHERE skills IS NOT NULL');
   const tally = new Map();
   for (const r of topSkills) {
     let list = [];
@@ -623,11 +614,11 @@ app.get('/api/stats', requireAuth, (req, res) => {
   });
 });
 
-app.post('/api/flags/:slug', requireAuth, (req, res) => {
+app.post('/api/flags/:slug', requireAuth, async (req, res) => {
   const { starred, hidden, note } = req.body || {};
-  upsertUserJob(req.user.id, req.params.slug, { starred, hidden, note });
+  await upsertUserJob(req.user.id, req.params.slug, { starred, hidden, note });
   res.json(
-    db.prepare('SELECT * FROM user_jobs WHERE user_id = ? AND job_slug = ?').get(req.user.id, req.params.slug),
+    await get('SELECT * FROM user_jobs WHERE user_id = ? AND job_slug = ?', [req.user.id, req.params.slug]),
   );
 });
 
@@ -637,8 +628,8 @@ app.post('/api/flags/:slug', requireAuth, (req, res) => {
 
 let lastError = null;
 
-app.get('/api/status', requireAuth, (req, res) => {
-  const run = lastRun();
+app.get('/api/status', requireAuth, async (req, res) => {
+  const run = await lastRun();
 
   /*
    * The backlog is what explains a badge that never goes out. Each run enriches
@@ -646,14 +637,12 @@ app.get('/api/status', requireAuth, (req, res) => {
    * detail pages and will keep working for hours. Reporting the remainder turns
    * "still scraping?" into a number that visibly counts down.
    */
-  const backlog = db
-    .prepare(
+  const backlog = await get(
       `SELECT
          (SELECT COUNT(*) FROM jobs WHERE detail_fetched_at IS NULL) AS details,
          (SELECT COUNT(*) FROM jobs
            WHERE insights_fetched_at IS NULL AND COALESCE(bids, 0) > 0) AS insights`,
-    )
-    .get();
+    );
 
   res.json({
     scraping: isScraping(),
@@ -665,13 +654,13 @@ app.get('/api/status', requireAuth, (req, res) => {
     lastError,
     autoScrapeMinutes: config.autoScrapeMinutes,
     nextRunAt: nextRunAt ? new Date(nextRunAt).toISOString() : null,
-    total: db.prepare('SELECT COUNT(*) n FROM jobs').get().n,
+    total: (await get('SELECT COUNT(*) AS n FROM jobs')).n,
   });
 });
 
 /** Scrapes using the signed-in member's own Workana session. */
 app.post('/api/scrape', requireAuth, async (req, res) => {
-  const cookies = getWorkanaCookies(req.user.id);
+  const cookies = await getWorkanaCookies(req.user.id);
   if (!cookies) {
     return res.status(400).json({ error: 'Add your Workana session first, then refresh.' });
   }
@@ -702,10 +691,10 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
       detailBudget: Number(detailBudget) ?? config.detailBudget,
       userId: req.user.id,
       cookies,
-      proxy: getWorkanaProxy(req.user.id),
+      proxy: await getWorkanaProxy(req.user.id),
     });
     lastError = null;
-    recordCookieCheck(req.user.id, { valid: true });
+    await recordCookieCheck(req.user.id, { valid: true });
   } catch (err) {
     lastError = err.message;
   } finally {
@@ -714,10 +703,16 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
 });
 
 app.post('/api/insights/:slug', requireAuth, async (req, res) => {
-  const cookies = getWorkanaCookies(req.user.id);
+  const cookies = await getWorkanaCookies(req.user.id);
   if (!cookies) return res.status(400).json({ error: 'Add your Workana session first.' });
   try {
-    res.json(await fetchInsights(req.params.slug, { userId: req.user.id, cookies, proxy: getWorkanaProxy(req.user.id) }));
+    res.json(
+      await fetchInsights(req.params.slug, {
+        userId: req.user.id,
+        cookies,
+        proxy: await getWorkanaProxy(req.user.id),
+      }),
+    );
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -753,15 +748,7 @@ function scheduleNext(delay = config.autoScrapeMinutes * 60_000) {
 
     // Take turns between members so one account does not carry every refresh,
     // and so a member whose cookies expired does not stall the rotation.
-    const candidate = db
-      .prepare(
-        `SELECT id FROM users
-          WHERE workana_cookies IS NOT NULL AND COALESCE(cookies_valid, 1) = 1
-          ORDER BY COALESCE(
-            (SELECT MAX(started_at) FROM scrape_runs WHERE scrape_runs.user_id = users.id), '')
-          ASC LIMIT 1`,
-      )
-      .get();
+    const [candidate] = await scrapeCandidates();
 
     if (!candidate) {
       nextRunAt = null;
@@ -770,9 +757,14 @@ function scheduleNext(delay = config.autoScrapeMinutes * 60_000) {
     }
 
     try {
-      const cookies = getWorkanaCookies(candidate.id);
+      const cookies = await getWorkanaCookies(candidate.id);
       if (cookies) {
-        await scrape({ pages: config.refreshPages, userId: candidate.id, cookies, proxy: getWorkanaProxy(candidate.id) });
+        await scrape({
+          pages: config.refreshPages,
+          userId: candidate.id,
+          cookies,
+          proxy: await getWorkanaProxy(candidate.id),
+        });
         lastError = null;
       }
     } catch (err) {
@@ -784,13 +776,31 @@ function scheduleNext(delay = config.autoScrapeMinutes * 60_000) {
   }, delay);
 }
 
-purgeExpiredSessions();
-setInterval(purgeExpiredSessions, 6 * 3600e3).unref();
+/*
+ * The schema has to exist before the first request is served, and creating it is
+ * asynchronous now, so the listener starts only once the database is ready. A
+ * failure here is fatal on purpose: serving a board with no database behind it
+ * would just produce a wall of confusing 500s.
+ */
+await initDatabase().catch((err) => {
+  console.error(`\n  Could not open the database: ${err.message}\n`);
+  if (config.databaseUrl) {
+    console.error('  DATABASE_URL is set, so this is Postgres. Check the service is running');
+    console.error('  and that the host in the URL is reachable from here — Railway\'s');
+    console.error('  *.railway.internal names only resolve inside Railway.\n');
+  }
+  process.exit(1);
+});
 
-app.listen(config.port, config.host, () => {
+await purgeExpiredSessions();
+setInterval(() => purgeExpiredSessions().catch(() => {}), 6 * 3600e3).unref();
+
+app.listen(config.port, config.host, async () => {
   console.log(`\n  Workana job board  →  http://${config.host}:${config.port}\n`);
-  const n = db.prepare('SELECT COUNT(*) n FROM jobs').get().n;
-  console.log(`  ${n} jobs · ${userCount()} member(s) · ${config.dbFile}`);
+  const n = (await get('SELECT COUNT(*) AS n FROM jobs')).n;
+  const members = await userCount();
+  const store = config.databaseUrl ? `Postgres (${new URL(config.databaseUrl).host})` : config.dbFile;
+  console.log(`  ${n} jobs · ${members} member(s) · ${store}`);
   // Worth printing: the lane counts are derived from memory, so this is the one
   // place that explains why a small container scrapes narrower than a laptop.
   console.log(
@@ -798,7 +808,7 @@ app.listen(config.port, config.host, () => {
       `${config.detailConcurrency} detail / ${config.insightConcurrency} insight lane(s)`,
   );
 
-  if (userCount() === 0) {
+  if (members === 0) {
     console.log('  No accounts yet — the first person to register becomes the owner.');
   }
 

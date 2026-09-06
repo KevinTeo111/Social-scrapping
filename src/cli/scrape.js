@@ -1,7 +1,9 @@
 import { scrape } from '../scraper/scrape.js';
 import { config } from '../config.js';
-import { db } from '../db.js';
+import { get, initDatabase } from '../db.js';
 import { findUserByEmail, getWorkanaCookies } from '../auth.js';
+
+await initDatabase();
 
 const arg = (name, def) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -14,15 +16,15 @@ const arg = (name, def) => {
  * the owner account keeps "I bid on this" attached to a real person rather than
  * being dropped.
  */
-function resolveActor() {
+async function resolveActor() {
   const email = arg('user', '');
   if (email) {
-    const user = findUserByEmail(email);
+    const user = await findUserByEmail(email);
     if (!user) {
       console.error(`No account registered with email "${email}".`);
       process.exit(1);
     }
-    const cookies = getWorkanaCookies(user.id);
+    const cookies = await getWorkanaCookies(user.id);
     if (!cookies) {
       console.error(`${email} has not added a Workana session yet.`);
       process.exit(1);
@@ -30,7 +32,7 @@ function resolveActor() {
     return { userId: user.id, cookies, label: `${email} (stored session)` };
   }
 
-  const owner = db.prepare('SELECT id, email FROM users WHERE is_admin = 1 ORDER BY id LIMIT 1').get();
+  const owner = await get('SELECT id, email FROM users WHERE is_admin = 1 ORDER BY id LIMIT 1');
   return {
     userId: owner?.id ?? null,
     cookies: null, // falls back to the on-disk cookie file
@@ -38,7 +40,7 @@ function resolveActor() {
   };
 }
 
-const actor = resolveActor();
+const actor = await resolveActor();
 
 const options = {
   // No page target by default: walk until the results run out.
@@ -93,12 +95,12 @@ try {
   process.exitCode = 1;
 }
 
-const row = db.prepare(`SELECT
-  COUNT(*) total,
-  SUM(CASE WHEN detail_fetched_at IS NOT NULL THEN 1 ELSE 0 END) enriched,
-  SUM(CASE WHEN insights_fetched_at IS NOT NULL THEN 1 ELSE 0 END) with_insights,
-  SUM(CASE WHEN category = 'IT & Programming' THEN 1 ELSE 0 END) it
-  FROM jobs`).get();
+const row = await get(`SELECT
+  COUNT(*) AS total,
+  SUM(CASE WHEN detail_fetched_at IS NOT NULL THEN 1 ELSE 0 END) AS enriched,
+  SUM(CASE WHEN insights_fetched_at IS NOT NULL THEN 1 ELSE 0 END) AS with_insights,
+  SUM(CASE WHEN category = 'IT & Programming' THEN 1 ELSE 0 END) AS it
+  FROM jobs`);
 console.log(
   `DB: ${row.total} jobs (${row.enriched} enriched, ${row.with_insights} with contacts, ${row.it} IT & Programming)`,
 );

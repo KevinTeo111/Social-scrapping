@@ -16,7 +16,9 @@
  *   node scripts/backfill-bids.mjs --email you@example.com
  *   node scripts/backfill-bids.mjs --email you@example.com --apply
  */
-import { db } from '../src/db.js';
+import { all, get, run, initDatabase } from '../src/db.js';
+
+await initDatabase();
 
 const arg = (name) => {
   const i = process.argv.indexOf(name);
@@ -28,26 +30,25 @@ const email = arg('--email');
 
 if (!email) {
   console.error('Which account? Pass --email you@example.com');
-  console.table(db.prepare('SELECT id, email, name, is_admin FROM users').all());
+  console.table(await all('SELECT id, email, name, is_admin FROM users ORDER BY id'));
   process.exit(1);
 }
 
-const user = db.prepare('SELECT id, email FROM users WHERE email = ?').get(email);
+const user = await get('SELECT id, email FROM users WHERE email = ?', [email]);
 if (!user) {
-  console.error(`No account with that address. Known accounts:`);
-  console.table(db.prepare('SELECT id, email, name FROM users').all());
+  console.error('No account with that address. Known accounts:');
+  console.table(await all('SELECT id, email, name FROM users ORDER BY id'));
   process.exit(1);
 }
 
-const before = db
-  .prepare(
-    `SELECT SUM(has_own_bid) AS bids, SUM(was_contacted) AS contacted, COUNT(*) AS rows
-       FROM user_jobs WHERE user_id = ?`,
-  )
-  .get(user.id);
+const before = await get(
+  `SELECT SUM(has_own_bid) AS bids, SUM(was_contacted) AS contacted, COUNT(*) AS rows
+     FROM user_jobs WHERE user_id = ?`,
+  [user.id],
+);
 
-const pending = db
-  .prepare(
+const pending = (
+  await get(
     `SELECT COUNT(*) AS n FROM jobs j
       WHERE (j.has_own_bid = 1 OR j.was_contacted = 1)
         AND NOT EXISTS (
@@ -55,8 +56,9 @@ const pending = db
            WHERE uj.user_id = ? AND uj.job_slug = j.slug
              AND uj.has_own_bid >= j.has_own_bid
              AND uj.was_contacted >= j.was_contacted)`,
+    [user.id],
   )
-  .get(user.id).n;
+).n;
 
 console.log(`account ${user.email} (id ${user.id})`);
 console.log(`  overlay now:  ${before.rows} row(s), ${before.bids ?? 0} bid, ${before.contacted ?? 0} contacted`);
@@ -68,34 +70,27 @@ if (!apply) {
 }
 
 /*
- * MAX() rather than assignment: the overlay is the member's own record and may
- * already hold a flag the shared row lost, so this only ever adds.
+ * GREATEST rather than assignment: the overlay is the member's own record and
+ * may already hold a flag the shared row lost, so this only ever adds.
  *
- * The `WHERE true` is required — in an INSERT ... SELECT ... ON CONFLICT, SQLite
- * cannot tell whether "ON" opens a join or the upsert without it.
+ * The `WHERE` before ON CONFLICT is required — in an INSERT ... SELECT ...
+ * ON CONFLICT, SQLite cannot tell whether "ON" opens a join or the upsert.
  */
-db.exec('BEGIN');
-try {
-  db.prepare(
-    `INSERT INTO user_jobs (user_id, job_slug, has_own_bid, was_contacted, updated_at)
-       SELECT ?, slug, has_own_bid, was_contacted, ?
-         FROM jobs WHERE (has_own_bid = 1 OR was_contacted = 1)
-     ON CONFLICT(user_id, job_slug) DO UPDATE SET
-       has_own_bid   = MAX(user_jobs.has_own_bid, excluded.has_own_bid),
-       was_contacted = MAX(user_jobs.was_contacted, excluded.was_contacted),
-       updated_at    = excluded.updated_at`,
-  ).run(user.id, new Date().toISOString());
-  db.exec('COMMIT');
-} catch (err) {
-  db.exec('ROLLBACK');
-  throw err;
-}
+await run(
+  `INSERT INTO user_jobs (user_id, job_slug, has_own_bid, was_contacted, updated_at)
+     SELECT ?, slug, has_own_bid, was_contacted, ?
+       FROM jobs WHERE (has_own_bid = 1 OR was_contacted = 1)
+   ON CONFLICT(user_id, job_slug) DO UPDATE SET
+     has_own_bid   = GREATEST(user_jobs.has_own_bid, excluded.has_own_bid),
+     was_contacted = GREATEST(user_jobs.was_contacted, excluded.was_contacted),
+     updated_at    = excluded.updated_at`,
+  [user.id, new Date().toISOString()],
+);
 
-const after = db
-  .prepare(
-    `SELECT SUM(has_own_bid) AS bids, SUM(was_contacted) AS contacted, COUNT(*) AS rows
-       FROM user_jobs WHERE user_id = ?`,
-  )
-  .get(user.id);
+const after = await get(
+  `SELECT SUM(has_own_bid) AS bids, SUM(was_contacted) AS contacted, COUNT(*) AS rows
+     FROM user_jobs WHERE user_id = ?`,
+  [user.id],
+);
 
 console.log(`  overlay after: ${after.rows} row(s), ${after.bids} bid, ${after.contacted} contacted`);

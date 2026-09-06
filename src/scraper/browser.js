@@ -3,6 +3,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { config } from '../config.js';
 import { loadWorkanaCookies } from '../cookies.js';
+import { saveBrowserState, loadBrowserState } from '../auth.js';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -64,6 +65,11 @@ function proxyOptions(url) {
   }
 }
 
+/**
+ * Where a member's browser state lives when there is no account to hang it on —
+ * the CLI run from a cookie file. Anything belonging to a registered member goes
+ * to their row instead, so it survives a redeploy that erases the filesystem.
+ */
 export function statePathFor(userId) {
   return userId ? path.join(path.dirname(config.storageState), `state-user-${userId}.json`) : config.storageState;
 }
@@ -74,12 +80,16 @@ export function statePathFor(userId) {
  * Cloudflare issues a clearance bound to *this* machine -- keeping that between
  * runs is what stops every run from having to fight the challenge again.
  */
-function savedClearance(statePath) {
+async function savedClearance(userId) {
+  const state = userId ? await loadBrowserState(userId) : readStateFile(config.storageState);
+  return (state?.cookies || []).filter((c) => c.name === 'cf_clearance');
+}
+
+function readStateFile(file) {
   try {
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    return (state.cookies || []).filter((c) => c.name === 'cf_clearance');
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -93,7 +103,6 @@ export async function launchContext({
   userId = null,
   proxy = null,
 } = {}) {
-  const statePath = statePathFor(userId);
   // A member's own exit beats the instance-wide default.
   const egress = proxy || config.proxy;
   const browser = await chromium.launch({
@@ -127,21 +136,31 @@ export async function launchContext({
   // earned ourselves, which must win over the stale one in the export.
   const jar = cookies ?? loadWorkanaCookies();
   await context.addCookies(jar.filter((c) => c.name !== 'cf_clearance'));
-  const clearance = savedClearance(statePath);
+  const clearance = await savedClearance(userId);
   if (clearance.length) await context.addCookies(clearance).catch(() => {});
 
   context.setDefaultNavigationTimeout(config.navTimeoutMs);
   context.setDefaultTimeout(config.navTimeoutMs);
 
-  context._statePath = statePath;
+  context._userId = userId;
   return { browser, context };
 }
 
+/**
+ * Keeps whatever clearance this run earned. For a registered member that goes to
+ * their row, encrypted alongside their cookies — it is a live credential, and it
+ * has to outlive a container that is rebuilt on every deploy. Only a run with no
+ * account behind it still falls back to a file.
+ */
 export async function saveState(context) {
   try {
-    const target = context._statePath || config.storageState;
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    await context.storageState({ path: target });
+    const state = await context.storageState();
+    if (context._userId) {
+      await saveBrowserState(context._userId, state);
+      return;
+    }
+    fs.mkdirSync(path.dirname(config.storageState), { recursive: true });
+    fs.writeFileSync(config.storageState, JSON.stringify(state), 'utf8');
   } catch {
     /* best effort */
   }

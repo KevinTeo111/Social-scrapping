@@ -10,7 +10,8 @@ import {
 } from './browser.js';
 import { pageExtractList, pageExtractDetail, pageExtractInsights, normaliseListJob, normaliseDetail } from './parse.js';
 import {
-  db,
+  all,
+  run as dbRun,
   upsertJob,
   upsertClient,
   upsertUserJob,
@@ -131,7 +132,7 @@ async function runScrape({
   proxy = null,
   onProgress: report = () => {},
 } = {}) {
-  const runId = startRun(userId);
+  const runId = await startRun(userId);
   const stats = { pages: 0, seen: 0, inserted: 0, updated: 0, details: 0, insights: 0, ok: false, error: null };
   const startedAt = Date.now();
   let browser;
@@ -230,13 +231,13 @@ async function runScrape({
       for (const card of usable) {
         seenSlugs.add(card.slug);
         const job = normaliseListJob(card, now);
-        if (job.client) upsertClient(job.client);
-        const result = upsertJob(job);
+        if (job.client) await upsertClient(job.client);
+        const result = await upsertJob(job);
 
         // "I bid on this" and "the client contacted me" are true of the account
         // that fetched the page, not of the posting, so they belong to the user.
         if (userId && (job.hasOwnBid || job.wasContacted)) {
-          upsertUserJob(userId, job.slug, {
+          await upsertUserJob(userId, job.slug, {
             hasOwnBid: job.hasOwnBid,
             wasContacted: job.wasContacted,
           });
@@ -266,7 +267,7 @@ async function runScrape({
   } finally {
     // Keep any cf_clearance this run earned so the next one starts warm.
     if (context) await saveState(context);
-    finishRun(runId, stats);
+    await finishRun(runId, stats);
     progress = null;
     if (browser) await browser.close().catch(() => {});
   }
@@ -280,15 +281,15 @@ async function runScrape({
  * details we already have are skipped unless they look stale.
  */
 async function enrichDetails(context, { budget, onProgress = () => {}, userId = null }) {
-  const targets = db
-    .prepare(
+  const targets = (
+    await all(
       `SELECT slug FROM jobs
         WHERE detail_fetched_at IS NULL
         ORDER BY COALESCE(published_approx_at, published_at, first_seen_at) DESC
         LIMIT ?`,
+      [budget],
     )
-    .all(budget)
-    .map((r) => r.slug);
+  ).map((r) => r.slug);
 
   if (targets.length === 0) return 0;
 
@@ -333,9 +334,9 @@ export async function fetchDetail(page, slug, userId = null) {
   const raw = await page.evaluate(pageExtractDetail);
   const detail = normaliseDetail(raw);
 
-  if (detail.client?.id) upsertClient(detail.client);
+  if (detail.client?.id) await upsertClient(detail.client);
 
-  upsertJob({
+  await upsertJob({
     slug,
     url,
     title: detail.title || slug,
@@ -344,10 +345,10 @@ export async function fetchDetail(page, slug, userId = null) {
     raw: { detail: raw },
   });
 
-  if (detail.client?.id) saveClientReviews(detail.client.id, slug, detail.reviews);
+  if (detail.client?.id) await saveClientReviews(detail.client.id, slug, detail.reviews);
 
   // The bid button reads "Improve proposal" only for the account that bid.
-  if (userId && detail.hasOwnBid) upsertUserJob(userId, slug, { hasOwnBid: true });
+  if (userId && detail.hasOwnBid) await upsertUserJob(userId, slug, { hasOwnBid: true });
 
   return detail;
 }
@@ -379,10 +380,10 @@ export async function fetchInsightsOn(page, slug, userId = null) {
   await sleep(400);
 
   const raw = await page.evaluate(pageExtractInsights);
-  saveInsights(slug, raw);
+  await saveInsights(slug, raw);
 
   // "Your budget" is what *this* account proposed — not a property of the job.
-  if (userId && raw.ownBudget) upsertUserJob(userId, slug, { ownBudget: raw.ownBudget, hasOwnBid: true });
+  if (userId && raw.ownBudget) await upsertUserJob(userId, slug, { ownBudget: raw.ownBudget, hasOwnBid: true });
 
   return raw;
 }
@@ -403,15 +404,15 @@ export async function fetchInsights(slug, { userId = null, cookies = null, proxy
  * bids are skipped -- the page would be empty.
  */
 async function enrichInsights(context, { budget, onProgress = () => {}, userId = null }) {
-  const targets = db
-    .prepare(
+  const targets = (
+    await all(
       `SELECT slug FROM jobs
         WHERE insights_fetched_at IS NULL AND COALESCE(bids, 0) > 0
         ORDER BY COALESCE(published_approx_at, published_at, first_seen_at) DESC
         LIMIT ?`,
+      [budget],
     )
-    .all(budget)
-    .map((r) => r.slug);
+  ).map((r) => r.slug);
 
   if (!targets.length) return 0;
 
@@ -444,10 +445,10 @@ async function enrichInsights(context, { budget, onProgress = () => {}, userId =
               break;
             }
             // Some jobs have no insights page (closed, or not visible to us).
-            db.prepare('UPDATE jobs SET insights_fetched_at = ? WHERE slug = ?').run(
+            await dbRun('UPDATE jobs SET insights_fetched_at = ? WHERE slug = ?', [
               new Date().toISOString(),
               slug,
-            );
+            ]);
           }
           await jitter();
         }

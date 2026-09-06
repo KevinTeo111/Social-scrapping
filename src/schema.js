@@ -228,7 +228,6 @@ CREATE INDEX IF NOT EXISTS idx_jobs_published  ON jobs(published_approx_at DESC)
 CREATE INDEX IF NOT EXISTS idx_jobs_category   ON jobs(category_slug);
 CREATE INDEX IF NOT EXISTS idx_jobs_hourly     ON jobs(is_hourly);
 CREATE INDEX IF NOT EXISTS idx_jobs_client     ON jobs(client_id);
-CREATE INDEX IF NOT EXISTS idx_jobs_seq        ON jobs(seq);
 CREATE INDEX IF NOT EXISTS idx_reviews_client  ON client_reviews(client_id);
 CREATE INDEX IF NOT EXISTS idx_user_jobs_user  ON user_jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user   ON sessions(user_id);
@@ -256,6 +255,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(
   slug UNINDEXED, title, summary, description, skills, client,
   tokenize = 'unicode61 remove_diacritics 2'
 );
+`;
+
+/*
+ * Indexes over columns that an older database may not have yet. These cannot sit
+ * in TABLES: on an existing database that statement runs before the ALTERs
+ * below, and indexing a column that is about to be added fails the whole
+ * migration with "no such column".
+ */
+export const LATE_INDEXES = `
+CREATE INDEX IF NOT EXISTS idx_jobs_seq ON jobs(seq);
 `;
 
 /**

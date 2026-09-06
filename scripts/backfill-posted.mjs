@@ -14,18 +14,18 @@
  *   node scripts/backfill-posted.mjs            # report only
  *   node scripts/backfill-posted.mjs --apply    # write the dates
  */
-import { db } from '../src/db.js';
+import { all, run, tx, initDatabase } from '../src/db.js';
 import { parseRelative } from '../src/scraper/parse.js';
+
+await initDatabase();
 
 const apply = process.argv.includes('--apply');
 
-const rows = db
-  .prepare(
-    `SELECT slug, published_text, first_seen_at
-       FROM jobs
-      WHERE published_approx_at IS NULL AND published_text IS NOT NULL`,
-  )
-  .all();
+const rows = await all(
+  `SELECT slug, published_text, first_seen_at
+     FROM jobs
+    WHERE published_approx_at IS NULL AND published_text IS NOT NULL`,
+);
 
 const fixes = [];
 for (const r of rows) {
@@ -42,12 +42,11 @@ if (bySample.size) {
   console.table([...bySample].map(([text, at]) => ({ text, resolves_to: at })));
 }
 
-const stuck = rows.filter((r) => !fixes.some((f) => f.slug === r.slug));
+const fixed = new Set(fixes.map((f) => f.slug));
+const stuck = rows.filter((r) => !fixed.has(r.slug));
 if (stuck.length) {
   console.log('\nstill unparsed:');
-  console.table(
-    [...new Set(stuck.map((r) => r.published_text))].slice(0, 20).map((text) => ({ text })),
-  );
+  console.table([...new Set(stuck.map((r) => r.published_text))].slice(0, 20).map((text) => ({ text })));
 }
 
 if (!apply) {
@@ -55,13 +54,10 @@ if (!apply) {
   process.exit(0);
 }
 
-const update = db.prepare('UPDATE jobs SET published_approx_at = ? WHERE slug = ?');
-db.exec('BEGIN');
-try {
-  for (const f of fixes) update.run(f.at, f.slug);
-  db.exec('COMMIT');
-} catch (err) {
-  db.exec('ROLLBACK');
-  throw err;
-}
+await tx(async (t) => {
+  for (const f of fixes) {
+    await run('UPDATE jobs SET published_approx_at = ? WHERE slug = ?', [f.at, f.slug], t);
+  }
+});
+
 console.log(`\nupdated ${fixes.length} job(s).`);

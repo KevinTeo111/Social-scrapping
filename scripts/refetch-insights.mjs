@@ -2,14 +2,15 @@
  * Re-collects Project Insights for jobs already fetched, after the badge-timing
  * fix. Clears the marker so the normal enrichment path picks them up.
  */
-import { db } from '../src/db.js';
+import { all, initDatabase } from '../src/db.js';
 import { launchContext, saveState, jitter } from '../src/scraper/browser.js';
 import { fetchInsightsOn } from '../src/scraper/scrape.js';
 
-const slugs = db
-  .prepare('SELECT slug FROM jobs WHERE insights_fetched_at IS NOT NULL ORDER BY first_seen_at DESC')
-  .all()
-  .map((r) => r.slug);
+await initDatabase();
+
+const slugs = (
+  await all('SELECT slug FROM jobs WHERE insights_fetched_at IS NOT NULL ORDER BY first_seen_at DESC')
+).map((r) => r.slug);
 
 console.log(`re-fetching insights for ${slugs.length} jobs`);
 

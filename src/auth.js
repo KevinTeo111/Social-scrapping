@@ -1,4 +1,4 @@
-import { db } from './db.js';
+import { all, get, run, insertReturning } from './sql.js';
 import { hashPassword, verifyPassword, newToken, encrypt, decrypt } from './secrets.js';
 import { parseWorkanaCookies } from './cookies.js';
 
@@ -10,16 +10,16 @@ const SESSION_DAYS = 30;
 
 const normaliseEmail = (email) => String(email || '').trim().toLowerCase();
 
-export function userCount() {
-  return db.prepare('SELECT COUNT(*) n FROM users').get().n;
+export async function userCount() {
+  return (await get('SELECT COUNT(*) AS n FROM users')).n;
 }
 
-export function findUserByEmail(email) {
-  return db.prepare('SELECT * FROM users WHERE email = ?').get(normaliseEmail(email));
+export async function findUserByEmail(email) {
+  return get('SELECT * FROM users WHERE email = ?', [normaliseEmail(email)]);
 }
 
-export function findUser(id) {
-  return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+export async function findUser(id) {
+  return get('SELECT * FROM users WHERE id = ?', [id]);
 }
 
 export class AuthError extends Error {
@@ -29,39 +29,38 @@ export class AuthError extends Error {
   }
 }
 
-export function registerUser({ email, password, name }) {
+export async function registerUser({ email, password, name }) {
   const mail = normaliseEmail(email);
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) throw new AuthError('Enter a valid email address.');
   if (!password || password.length < 8) throw new AuthError('Password must be at least 8 characters.');
-  if (findUserByEmail(mail)) throw new AuthError('That email is already registered.', 409);
+  if (await findUserByEmail(mail)) throw new AuthError('That email is already registered.', 409);
 
   const { hash, salt } = hashPassword(password);
   // The first account to register owns the instance.
-  const isAdmin = userCount() === 0 ? 1 : 0;
+  const isAdmin = (await userCount()) === 0 ? 1 : 0;
 
-  const info = db
-    .prepare(
-      `INSERT INTO users (email, name, password_hash, password_salt, is_admin, created_at)
-       VALUES (?,?,?,?,?,?)`,
-    )
-    .run(mail, String(name || '').trim() || null, hash, salt, isAdmin, new Date().toISOString());
+  const id = await insertReturning(
+    `INSERT INTO users (email, name, password_hash, password_salt, is_admin, created_at)
+     VALUES (?,?,?,?,?,?) RETURNING id`,
+    [mail, String(name || '').trim() || null, hash, salt, isAdmin, new Date().toISOString()],
+  );
 
-  return findUser(Number(info.lastInsertRowid));
+  return findUser(Number(id));
 }
 
-export function authenticate(email, password) {
-  const user = findUserByEmail(email);
+export async function authenticate(email, password) {
+  const user = await findUserByEmail(email);
   // Always run the comparison so a missing account and a wrong password take
   // the same time and cannot be told apart by an attacker enumerating emails.
   const ok = verifyPassword(password, user?.password_salt || 'x', user?.password_hash || '');
   if (!user || !ok) throw new AuthError('Email or password is incorrect.', 401);
 
-  db.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').run(new Date().toISOString(), user.id);
+  await run('UPDATE users SET last_login_at = ? WHERE id = ?', [new Date().toISOString(), user.id]);
   return user;
 }
 
-export function changePassword(userId, currentPassword, nextPassword) {
-  const user = findUser(userId);
+export async function changePassword(userId, currentPassword, nextPassword) {
+  const user = await findUser(userId);
   if (!user) throw new AuthError('No such user.', 404);
   if (!verifyPassword(currentPassword, user.password_salt, user.password_hash)) {
     throw new AuthError('Current password is incorrect.', 401);
@@ -69,45 +68,45 @@ export function changePassword(userId, currentPassword, nextPassword) {
   if (!nextPassword || nextPassword.length < 8) throw new AuthError('New password must be at least 8 characters.');
 
   const { hash, salt } = hashPassword(nextPassword);
-  db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?').run(hash, salt, userId);
+  await run('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?', [hash, salt, userId]);
   // Changing a password invalidates other sessions.
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+  await run('DELETE FROM sessions WHERE user_id = ?', [userId]);
 }
 
 /* ------------------------------------------------------------------ */
 /* Sessions                                                            */
 /* ------------------------------------------------------------------ */
 
-export function createSession(userId) {
+export async function createSession(userId) {
   const token = newToken();
   const now = new Date();
   const expires = new Date(now.getTime() + SESSION_DAYS * 86400e3);
-  db.prepare('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)').run(
+  await run('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)', [
     token,
     userId,
     now.toISOString(),
     expires.toISOString(),
-  );
+  ]);
   return { token, expires };
 }
 
-export function resolveSession(token) {
+export async function resolveSession(token) {
   if (!token) return null;
-  const row = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+  const row = await get('SELECT * FROM sessions WHERE token = ?', [token]);
   if (!row) return null;
   if (new Date(row.expires_at) < new Date()) {
-    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    await run('DELETE FROM sessions WHERE token = ?', [token]);
     return null;
   }
-  return findUser(row.user_id) || null;
+  return (await findUser(row.user_id)) || null;
 }
 
-export function destroySession(token) {
-  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+export async function destroySession(token) {
+  if (token) await run('DELETE FROM sessions WHERE token = ?', [token]);
 }
 
-export function purgeExpiredSessions() {
-  db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(new Date().toISOString());
+export async function purgeExpiredSessions() {
+  await run('DELETE FROM sessions WHERE expires_at < ?', [new Date().toISOString()]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -120,19 +119,20 @@ export function purgeExpiredSessions() {
  * cookies only — the export usually contains the person's whole browser profile,
  * and there is no reason to keep their Google or bank cookies — and encrypted.
  */
-export function setWorkanaCookies(userId, rawJson) {
+export async function setWorkanaCookies(userId, rawJson) {
   const cookies = parseWorkanaCookies(rawJson); // throws with a useful message
   const hasSession = cookies.some((c) => c.name === 'workana_session' && c.value);
 
-  db.prepare(
+  await run(
     `UPDATE users SET workana_cookies = ?, cookies_updated_at = ?, cookies_valid = NULL WHERE id = ?`,
-  ).run(encrypt(JSON.stringify(cookies)), new Date().toISOString(), userId);
+    [encrypt(JSON.stringify(cookies)), new Date().toISOString(), userId],
+  );
 
   return { count: cookies.length, hasSession };
 }
 
-export function getWorkanaCookies(userId) {
-  const user = findUser(userId);
+export async function getWorkanaCookies(userId) {
+  const user = await findUser(userId);
   if (!user?.workana_cookies) return null;
   const json = decrypt(user.workana_cookies);
   if (!json) return null;
@@ -143,10 +143,49 @@ export function getWorkanaCookies(userId) {
   }
 }
 
-export function clearWorkanaCookies(userId) {
-  db.prepare(
-    'UPDATE users SET workana_cookies = NULL, cookies_updated_at = NULL, cookies_valid = NULL, workana_name = NULL WHERE id = ?',
-  ).run(userId);
+export async function clearWorkanaCookies(userId) {
+  await run(
+    `UPDATE users SET workana_cookies = NULL, cookies_updated_at = NULL, cookies_valid = NULL,
+                      workana_name = NULL, browser_state = NULL, browser_state_at = NULL
+      WHERE id = ?`,
+    [userId],
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Browser state                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The Playwright storage state a member's scrapes reuse between runs.
+ *
+ * Its value is the `cf_clearance` inside it: Cloudflare issues that to the
+ * browser and IP that actually passed the challenge, so keeping it is what stops
+ * every run from having to fight the challenge again. It used to live in a file
+ * beside the database, which a container redeploy erased along with everything
+ * else — so it now sits on the member's row, encrypted like their cookies,
+ * because it is every bit as much a live credential.
+ */
+export async function saveBrowserState(userId, state) {
+  if (!userId || !state) return;
+  await run('UPDATE users SET browser_state = ?, browser_state_at = ? WHERE id = ?', [
+    encrypt(typeof state === 'string' ? state : JSON.stringify(state)),
+    new Date().toISOString(),
+    userId,
+  ]);
+}
+
+export async function loadBrowserState(userId) {
+  if (!userId) return null;
+  const user = await findUser(userId);
+  if (!user?.browser_state) return null;
+  const json = decrypt(user.browser_state);
+  if (!json) return null;
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -160,10 +199,10 @@ export function clearWorkanaCookies(userId) {
  *
  * Stored encrypted, since proxy URLs routinely embed credentials.
  */
-export function setWorkanaProxy(userId, url) {
+export async function setWorkanaProxy(userId, url) {
   const value = String(url || '').trim();
   if (!value) {
-    db.prepare('UPDATE users SET workana_proxy = NULL WHERE id = ?').run(userId);
+    await run('UPDATE users SET workana_proxy = NULL WHERE id = ?', [userId]);
     return null;
   }
 
@@ -177,12 +216,12 @@ export function setWorkanaProxy(userId, url) {
     throw new AuthError(`Unsupported proxy protocol "${parsed.protocol.replace(':', '')}".`);
   }
 
-  db.prepare('UPDATE users SET workana_proxy = ? WHERE id = ?').run(encrypt(value), userId);
+  await run('UPDATE users SET workana_proxy = ? WHERE id = ?', [encrypt(value), userId]);
   return describeProxy(value);
 }
 
-export function getWorkanaProxy(userId) {
-  const user = findUser(userId);
+export async function getWorkanaProxy(userId) {
+  const user = await findUser(userId);
   return user?.workana_proxy ? decrypt(user.workana_proxy) : null;
 }
 
@@ -197,12 +236,12 @@ export function describeProxy(url) {
   }
 }
 
-export function recordCookieCheck(userId, { valid, workanaName }) {
-  db.prepare('UPDATE users SET cookies_valid = ?, workana_name = COALESCE(?, workana_name) WHERE id = ?').run(
+export async function recordCookieCheck(userId, { valid, workanaName }) {
+  await run('UPDATE users SET cookies_valid = ?, workana_name = COALESCE(?, workana_name) WHERE id = ?', [
     valid ? 1 : 0,
     workanaName ?? null,
     userId,
-  );
+  ]);
 }
 
 /** Never send hashes or cookie blobs to the browser. */
@@ -222,18 +261,33 @@ export function publicUser(user) {
   };
 }
 
+/** Members eligible to carry a background refresh, least recently run first. */
+export async function scrapeCandidates() {
+  return all(
+    `SELECT id FROM users
+      WHERE workana_cookies IS NOT NULL AND COALESCE(cookies_valid, 1) = 1
+      ORDER BY COALESCE(
+        (SELECT MAX(started_at) FROM scrape_runs WHERE scrape_runs.user_id = users.id), '')
+      ASC`,
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Express middleware                                                  */
 /* ------------------------------------------------------------------ */
 
 export const SESSION_COOKIE = 'wk_session';
 
-export function attachUser(req, _res, next) {
+/**
+ * Express 5 forwards a rejected promise from middleware to the error handler,
+ * so this can be async without a try/catch of its own.
+ */
+export async function attachUser(req, _res, next) {
   const raw = req.headers.cookie || '';
   const match = raw.split(';').map((c) => c.trim()).find((c) => c.startsWith(`${SESSION_COOKIE}=`));
   const token = match ? decodeURIComponent(match.slice(SESSION_COOKIE.length + 1)) : null;
   req.sessionToken = token;
-  req.user = resolveSession(token);
+  req.user = await resolveSession(token);
   next();
 }
 

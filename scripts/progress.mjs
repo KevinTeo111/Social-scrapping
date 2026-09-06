@@ -1,13 +1,14 @@
-import { DatabaseSync } from 'node:sqlite';
-import { config } from '../src/config.js';
+/** One line on how far enrichment has got. Safe to run while a scrape is going. */
+import { get, initDatabase } from '../src/db.js';
 
-const db = new DatabaseSync(config.dbFile, { readOnly: true });
+await initDatabase();
+
 console.log(
-  db.prepare(`SELECT COUNT(*) total,
-    SUM(CASE WHEN detail_fetched_at IS NOT NULL THEN 1 ELSE 0 END) enriched,
-    SUM(CASE WHEN insights_fetched_at IS NOT NULL THEN 1 ELSE 0 END) with_insights,
-    SUM(CASE WHEN category = 'IT & Programming' THEN 1 ELSE 0 END) it,
-    SUM(CASE WHEN category IS NOT NULL AND category <> 'IT & Programming' THEN 1 ELSE 0 END) non_it,
-    SUM(CASE WHEN category IS NULL THEN 1 ELSE 0 END) unknown_cat
-    FROM jobs`).get(),
+  await get(`SELECT COUNT(*) AS total,
+    SUM(CASE WHEN detail_fetched_at IS NOT NULL THEN 1 ELSE 0 END) AS enriched,
+    SUM(CASE WHEN insights_fetched_at IS NOT NULL THEN 1 ELSE 0 END) AS with_insights,
+    SUM(CASE WHEN category = 'IT & Programming' THEN 1 ELSE 0 END) AS it,
+    SUM(CASE WHEN category IS NOT NULL AND category <> 'IT & Programming' THEN 1 ELSE 0 END) AS non_it,
+    SUM(CASE WHEN category IS NULL THEN 1 ELSE 0 END) AS unknown_cat
+    FROM jobs`),
 );
