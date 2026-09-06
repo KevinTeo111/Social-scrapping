@@ -523,13 +523,23 @@ app.get('/api/jobs/:slug', requireAuth, async (req, res) => {
    * SQLite yields 0/1, and the ordering below is arithmetic.
    */
   const me = req.user.workana_name;
-  const insights = await all(
-    `SELECT *, CASE WHEN freelancer = ? THEN 1 ELSE 0 END AS is_self
-       FROM job_insights WHERE job_slug = ?
-      ORDER BY in_contact DESC, proposal_selected DESC, is_self DESC,
-               is_hero DESC, COALESCE(rating, 0) DESC`,
-    [me ?? '', req.params.slug],
-  );
+
+  /*
+   * The computed column cannot also be called `is_self`: the table already has a
+   * column of that name, `SELECT *` emits it, and two output columns sharing a
+   * name make `ORDER BY is_self` ambiguous — which Postgres rejects outright
+   * where SQLite just picked the later one. It is computed under its own name
+   * and overwrites the stored value below, which is the legacy one and always 0.
+   */
+  const insights = (
+    await all(
+      `SELECT *, CASE WHEN freelancer = ? THEN 1 ELSE 0 END AS viewer_is_self
+         FROM job_insights WHERE job_slug = ?
+        ORDER BY in_contact DESC, proposal_selected DESC, viewer_is_self DESC,
+                 is_hero DESC, COALESCE(rating, 0) DESC`,
+      [me ?? '', req.params.slug],
+    )
+  ).map((row) => ({ ...row, is_self: row.viewer_is_self }));
 
   const otherJobs = job.client_id
     ? await all(

@@ -95,14 +95,29 @@ await check('stats: budgets', () =>
 );
 
 const sampleSlug = (await get('SELECT slug FROM jobs LIMIT 1'))?.slug ?? 'no-such-job';
+// The computed column is deliberately not called is_self: job_insights already
+// has one, and two output columns of the same name make the ORDER BY ambiguous.
 await check('drawer: insights', () =>
   all(
-    `SELECT *, CASE WHEN freelancer = ? THEN 1 ELSE 0 END AS is_self
+    `SELECT *, CASE WHEN freelancer = ? THEN 1 ELSE 0 END AS viewer_is_self
        FROM job_insights WHERE job_slug = ?
-      ORDER BY in_contact DESC, proposal_selected DESC, is_self DESC,
+      ORDER BY in_contact DESC, proposal_selected DESC, viewer_is_self DESC,
                is_hero DESC, COALESCE(rating, 0) DESC`,
     ['nobody', sampleSlug],
   ),
+);
+await check('drawer: job row', () =>
+  get(
+    `SELECT j.seq AS no, j.slug, j.title, j.description, j.raw, c.name AS client_name
+       FROM jobs j
+       LEFT JOIN clients c ON c.id = j.client_id
+       LEFT JOIN user_jobs uf ON uf.job_slug = j.slug AND uf.user_id = ?
+      WHERE j.slug = ?`,
+    [-1, sampleSlug],
+  ),
+);
+await check('drawer: client reviews', () =>
+  all('SELECT * FROM client_reviews ORDER BY id DESC LIMIT 25'),
 );
 await check('status: backlog', () =>
   get(`SELECT
