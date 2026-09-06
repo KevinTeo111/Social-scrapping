@@ -9,6 +9,7 @@ import {
   isScraping,
   scrapingUserId,
   queueLength,
+  runStateFor,
   currentProgress,
   fetchInsights,
   checkLogin,
@@ -676,8 +677,22 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
   }
 
   const { pages, category, query, detailBudget } = req.body || {};
-  // Runs queue rather than reject, so a busy instance still accepts the request.
-  res.json({ started: true, queued: isScraping() ? queueLength() + 1 : 0 });
+
+  /*
+   * Answer before starting, and say which of the three things happened: this
+   * request started a run, joined the one this member already had, or lined up
+   * behind somebody else's. Previously it always claimed "started", so a member
+   * clicking Refresh during another member's run had no way to tell that their
+   * click had done nothing new.
+   */
+  const already = runStateFor(req.user.id);
+  const deeper = (Number(pages) || config.refreshPages) > config.refreshPages;
+  res.json({
+    started: !already || deeper,
+    state: already,
+    scrapingMine: scrapingUserId() === req.user.id,
+    queued: queueLength(),
+  });
 
   try {
     await scrape({

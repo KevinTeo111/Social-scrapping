@@ -1003,11 +1003,23 @@ $('#clearFilters').onclick = () => {
   load();
 };
 
+/**
+ * Says what the click actually did. A second request from a member who is
+ * already running or waiting joins the one they have rather than stacking
+ * another, so "started" would be a lie in three of the four cases.
+ */
+function describeScrapeRequest(r, what) {
+  if (r.state === 'running' && !r.started) return `${what} is already running`;
+  if (r.state === 'queued' && !r.started) return `${what} is already queued`;
+  if (r.queued) return `${what} queued behind ${r.queued} other run(s)`;
+  return `${what} started`;
+}
+
 $('#refreshBtn').onclick = async () => {
   $('#refreshBtn').disabled = true;
   try {
     const r = await api('/api/scrape', { method: 'POST', body: JSON.stringify({}) });
-    toast(r.queued ? `Queued behind ${r.queued} run(s)` : 'Scrape started');
+    toast(describeScrapeRequest(r, 'Scrape'));
   } catch (ex) {
     toast(ex.message);
     // Almost always "add your Workana session first" — take them there.
@@ -1035,7 +1047,7 @@ $('#fullCrawlBtn').onclick = async () => {
   btn.disabled = true;
   try {
     const r = await api('/api/scrape', { method: 'POST', body: JSON.stringify({ pages: 250 }) });
-    toast(r.queued ? `Full crawl queued behind ${r.queued} run(s)` : 'Full crawl started — this takes a while');
+    toast(describeScrapeRequest(r, 'Full crawl'));
   } catch (ex) {
     toast(ex.message);
     if (/session/i.test(ex.message)) openAccount();

@@ -24,9 +24,16 @@ import {
  * Only one scrape at a time, across all accounts. Several members each driving
  * their own Chromium at Workana simultaneously is both heavy locally and a good
  * way to get the whole instance rate-limited, so runs queue instead.
+ *
+ * At most one waiting run per member, though. Every run walks the same list
+ * pages, so a queue of them is not more work done, it is the same work repeated
+ * while everyone waits longer — which is what "3 queued" behind another member's
+ * run actually meant. A second request from a member who is already running or
+ * already waiting joins the one they have instead of adding another.
  */
 let running = null;
 let runningUserId = null;
+let runningPages = 0;
 // Named `pending` rather than `queue` because enrichDetails() has its own local
 // work queue; two things called `queue` in one module is a trap.
 const pending = [];
@@ -34,6 +41,16 @@ const pending = [];
 export const isScraping = () => Boolean(running);
 export const scrapingUserId = () => runningUserId;
 export const queueLength = () => pending.length;
+export const isQueued = (userId) => pending.some((p) => p.userId === userId);
+
+/** Where a member stands right now: running their own, waiting, or neither. */
+export function runStateFor(userId) {
+  if (running && runningUserId === userId) return 'running';
+  if (isQueued(userId)) return 'queued';
+  return null;
+}
+
+const pagesOf = (options) => Number(options?.pages) || config.refreshPages;
 
 /**
  * A run walks list pages, then detail pages, then insight pages, and the whole
@@ -45,29 +62,49 @@ let progress = null;
 export const currentProgress = () => progress;
 
 export function scrape(options = {}) {
-  const task = () => {
-    runningUserId = options.userId ?? null;
-    return runScrape(options);
-  };
+  const userId = options.userId ?? null;
+  const pages = pagesOf(options);
 
   if (!running) {
-    running = task().finally(next);
+    runningUserId = userId;
+    runningPages = pages;
+    running = runScrape(options).finally(next);
     return running;
   }
 
-  // Already busy: line up behind whatever is in flight.
-  return new Promise((resolve, reject) => {
-    pending.push({ task, resolve, reject });
+  const waiting = pending.find((p) => p.userId === userId);
+  if (waiting) {
+    /*
+     * This member is already in line. A deeper request replaces the shallower
+     * one it would have superseded — otherwise clicking Refresh and then Full
+     * crawl would silently discard the full crawl.
+     */
+    if (pages > pagesOf(waiting.options)) waiting.options = options;
+    return waiting.promise;
+  }
+
+  // Their own run is in flight: only queue behind it for something deeper.
+  if (runningUserId === userId && pages <= runningPages) return running;
+
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
   });
+  pending.push({ userId, options, promise, resolve, reject });
+  return promise;
 }
 
 function next() {
   running = null;
   runningUserId = null;
+  runningPages = 0;
   const item = pending.shift();
   if (!item) return;
-  running = item
-    .task()
+  runningUserId = item.userId;
+  runningPages = pagesOf(item.options);
+  running = runScrape(item.options)
     .then(item.resolve, item.reject)
     .finally(next);
 }
