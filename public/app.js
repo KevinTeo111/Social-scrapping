@@ -597,6 +597,35 @@ function closeDrawer() {
   document.querySelectorAll('tr.is-open').forEach((r) => r.classList.remove('is-open'));
 }
 
+/**
+ * Workana's own slug form: lower case, accents stripped, everything else a
+ * hyphen. "Hiyashi Kari" becomes "hiyashi-kari".
+ */
+const slugifyName = (name) =>
+  String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+/**
+ * The conversation with the client about this job.
+ *
+ * Workana addresses a thread as /inbox/<job slug>/<your handle>, both of which
+ * are already known — so the link is built rather than waiting for a scrape to
+ * observe it. A stored href is preferred only when it is an inbox link itself:
+ * the same button reads "Improve proposal" on some jobs and points at the
+ * proposal form, which is not what this button promises.
+ */
+function messagesUrl(job) {
+  if (/\/inbox\//.test(job.bid_action_url || '')) return job.bid_action_url;
+  const handle = slugifyName(me?.workanaName);
+  return handle
+    ? `https://www.workana.com/inbox/${encodeURIComponent(job.slug)}/${handle}`
+    : 'https://www.workana.com/messages';
+}
+
 /** The whole job as plain text, for the drawer's Copy details button. */
 function jobAsText({ job, insights = [] }) {
   const contacted = insights.filter((p) => p.in_contact);
@@ -606,7 +635,6 @@ function jobAsText({ job, insights = [] }) {
 
   return [
     job.title,
-    job.url,
     '',
     line('Posted', hasPostedDate(job) ? fullStamp(postedAt(job)) : job.published_text || 'unknown'),
     line('Budget', job.budget_text || shortBudget(job)),
@@ -763,14 +791,11 @@ function drawerHtml({ job, reviews, insights, otherJobs }) {
       <a class="btn btn-primary" href="${esc(job.url)}" target="_blank" rel="noopener">Open on Workana ↗</a>
       ${
         /*
-         * Once you have bid, the useful next action is the conversation, not the
-         * posting. Workana's own button on the card becomes the way into that
-         * thread, and its href is the only link to it we ever see — so it is
-         * used when a scrape has captured it, and the inbox is the fallback for
-         * jobs collected before that was stored.
+         * Once you have bid, the useful next action is the conversation, not
+         * the posting. See messagesUrl() for how that link is worked out.
          */
         job.has_own_bid
-          ? `<a class="btn btn-go" href="${esc(job.bid_action_url || 'https://www.workana.com/messages')}"
+          ? `<a class="btn btn-go" href="${esc(messagesUrl(job))}"
                 target="_blank" rel="noopener">💬 Go to messages ↗</a>`
           : '<button class="btn" data-copy>📋 Copy details</button>'
       }
