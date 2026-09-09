@@ -11,6 +11,8 @@ import {
   queueLength,
   runStateFor,
   currentProgress,
+  stopScraping,
+  isCancelling,
   fetchInsights,
   checkLogin,
 } from './scraper/scrape.js';
@@ -722,6 +724,8 @@ app.get('/api/status', requireAuth, async (req, res) => {
     scraping: isScraping(),
     scrapingMine: scrapingUserId() === req.user.id,
     queued: queueLength(),
+    stopping: isCancelling(),
+    canStop: Boolean(req.user.is_admin),
     progress: currentProgress(),
     backlog,
     lastRun: run,
@@ -774,6 +778,28 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
   } finally {
     scheduleNext();
   }
+});
+
+/**
+ * Stops the scrape in flight and clears anything queued behind it.
+ *
+ * Owner-only. There is one browser and one queue for the whole instance, so a
+ * stop is never just personal -- it ends the run whichever member's session is
+ * driving it, and drops what everyone else was waiting on. That is a decision
+ * for whoever runs the instance rather than for any member who happens to be
+ * impatient.
+ *
+ * Nothing is undone: jobs are written as they are read, so a stop costs the
+ * remainder of the run rather than its results.
+ */
+app.post('/api/scrape/stop', requireAuth, requireAdmin, async (req, res) => {
+  if (!isScraping() && !queueLength()) {
+    return res.json({ ok: true, stopped: false, note: 'Nothing is running.' });
+  }
+
+  const result = await stopScraping();
+  console.log(`[scrape] stopped by ${req.user.email}`);
+  res.json({ ok: true, stopped: true, ...result });
 });
 
 app.post('/api/insights/:slug', requireAuth, async (req, res) => {

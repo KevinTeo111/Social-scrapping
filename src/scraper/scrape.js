@@ -6,6 +6,7 @@ import {
   sleep,
   saveState,
   CloudflareChallengeError,
+  isTargetCrash,
   dump,
 } from './browser.js';
 import { pageExtractList, pageExtractDetail, pageExtractInsights, normaliseListJob, normaliseDetail } from './parse.js';
@@ -54,6 +55,24 @@ export function runStateFor(userId) {
 
 const pagesOf = (options) => Number(options?.pages) || config.refreshPages;
 
+/*
+ * Stopping a run.
+ *
+ * A run is minutes of network waits, so a flag alone would leave it sitting on
+ * whatever navigation it had already started -- up to a full NAV_TIMEOUT_MS
+ * before it noticed. Closing the browser is what makes it stop now: every
+ * pending Playwright call rejects immediately, and the enrichment lanes already
+ * treat a dead tab as "stop, keep what we have". The flag then prevents the
+ * loops from opening anything new.
+ *
+ * Nothing is rolled back. Every job read before the stop was upserted as it was
+ * read, so cancelling costs the remainder of the run, not its results.
+ */
+let cancelling = false;
+let activeBrowser = null;
+
+export const isCancelling = () => cancelling;
+
 /**
  * A run walks list pages, then detail pages, then insight pages, and the whole
  * thing takes minutes. Without this the UI can only say "scraping", which is
@@ -98,6 +117,32 @@ export function scrape(options = {}) {
   return promise;
 }
 
+/**
+ * Stops the run in flight and empties the queue behind it.
+ *
+ * Queued runs are resolved rather than rejected: their caller asked for a
+ * scrape and is getting an answer, just one that says nothing was collected.
+ * Rejecting would surface as a failure in the status badge, which a deliberate
+ * stop is not.
+ */
+export async function stopScraping() {
+  const stopped = { wasRunning: Boolean(running), queued: pending.length };
+
+  while (pending.length) {
+    const item = pending.shift();
+    item.resolve({ ok: false, cancelled: true, seen: 0, error: 'Cancelled before it started' });
+  }
+
+  if (running) {
+    cancelling = true;
+    // Closing the browser is what interrupts an in-flight navigation; without
+    // it the run would idle until whatever it was waiting on timed out.
+    if (activeBrowser) await activeBrowser.close().catch(() => {});
+  }
+
+  return stopped;
+}
+
 function next() {
   running = null;
   runningUserId = null;
@@ -134,6 +179,8 @@ async function runScrape({
   onProgress: report = () => {},
 } = {}) {
   const runId = await startRun(userId);
+  // A stop applies to the run that was in flight, never to the next one.
+  cancelling = false;
   const stats = { pages: 0, seen: 0, inserted: 0, updated: 0, details: 0, insights: 0, ok: false, error: null };
   const startedAt = Date.now();
   let browser;
@@ -149,6 +196,7 @@ async function runScrape({
 
   try {
     ({ browser, context } = await launchContext({ cookies, userId, proxy }));
+    activeBrowser = browser;
     const page = await context.newPage();
 
     /*
@@ -170,6 +218,11 @@ async function runScrape({
     const seenSlugs = new Set();
 
     for (let p = 1; p <= pages; p++) {
+      if (cancelling) {
+        stats.error = `Stopped after page ${p - 1} (kept ${stats.seen} jobs)`;
+        stats.endedAt = p;
+        break;
+      }
       const url = listUrl({ page: p, language, category, query });
       let usable = null;
 
@@ -189,6 +242,11 @@ async function runScrape({
           });
           cards = await page.evaluate(pageExtractList);
         } catch (err) {
+          if (cancelling || isTargetCrash(err)) {
+            stats.error = `Stopped during page ${p} (kept ${stats.seen} jobs)`;
+            cards = null;
+            break;
+          }
           if (err instanceof CloudflareChallengeError || err.code === 'CF_CHALLENGE') {
             await dump(page, `challenge-page-${p}`).catch(() => {});
             stats.error = `Cloudflare challenge on page ${p} (stopped early, kept ${stats.seen} jobs)`;
@@ -198,7 +256,9 @@ async function runScrape({
           // The tab died. Nothing further can be fetched, but everything
           // already upserted stands, so end the walk instead of failing the run.
           if (err.code === 'BROWSER_CRASH') {
-            stats.error = `${err.message} (stopped at page ${p}, kept ${stats.seen} jobs)`;
+            stats.error = cancelling
+              ? `Stopped during page ${p} (kept ${stats.seen} jobs)`
+              : `${err.message} (stopped at page ${p}, kept ${stats.seen} jobs)`;
             cards = null;
             break;
           }
@@ -252,16 +312,26 @@ async function runScrape({
       if (p < pages) await jitter();
     }
 
-    if (withDetails && detailBudget > 0) {
+    if (withDetails && detailBudget > 0 && !cancelling) {
       stats.details = await enrichDetails(context, { budget: detailBudget, onProgress, userId });
     }
 
-    if (insightBudget > 0) {
+    if (insightBudget > 0 && !cancelling) {
       stats.insights = await enrichInsights(context, { budget: insightBudget, onProgress, userId });
     }
 
+    if (cancelling && !stats.error) {
+      stats.error = `Stopped by request (kept ${stats.seen} jobs)`;
+    }
+    stats.cancelled = cancelling;
     stats.ok = true;
   } catch (err) {
+    if (cancelling) {
+      stats.ok = true;
+      stats.cancelled = true;
+      stats.error = `Stopped by request (kept ${stats.seen} jobs)`;
+      return stats;
+    }
     stats.ok = false;
     stats.error = err.message;
     throw err;
@@ -270,6 +340,7 @@ async function runScrape({
     if (context) await saveState(context);
     await finishRun(runId, stats);
     progress = null;
+    activeBrowser = null;
     if (browser) await browser.close().catch(() => {});
   }
 
@@ -303,6 +374,7 @@ async function enrichDetails(context, { budget, onProgress = () => {}, userId = 
       const page = await context.newPage();
       try {
         while (queue.length) {
+          if (cancelling) break;
           const slug = queue.shift();
           try {
             await fetchDetail(page, slug, userId);
@@ -448,6 +520,7 @@ async function enrichInsights(context, { budget, onProgress = () => {}, userId =
       const page = await context.newPage();
       try {
         while (queue.length) {
+          if (cancelling) break;
           const slug = queue.shift();
           try {
             await fetchInsightsOn(page, slug, userId);

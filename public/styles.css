@@ -619,3 +619,8 @@ tr:hover .j-title .tx { color: var(--accent); }
   .jobs thead th { top: var(--topbar-h); }
   .toolbar { position: static; }
 }
+
+/* Stop: shown only while a scrape is running, so it reads as an interruption
+   rather than one more thing to click. */
+.btn-stop { background: var(--red-soft); color: var(--red); border-color: transparent; }
+.btn-stop:disabled { opacity: .6; }

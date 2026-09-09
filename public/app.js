@@ -1111,6 +1111,13 @@ async function pollStatus() {
     }
     $('#totalCount').textContent = `${s.total} total`;
 
+    // Owner-only: one browser and one queue serve the whole instance, so
+    // stopping is not a personal action.
+    const stop = $('#stopBtn');
+    stop.hidden = !(s.canStop && (s.scraping || s.queued));
+    stop.disabled = Boolean(s.stopping);
+    stop.textContent = s.stopping ? 'Stopping…' : '■ Stop';
+
     if (pollStatus.wasScraping && !s.scraping) { load(); loadFacets(); }
     pollStatus.wasScraping = s.scraping;
   } catch { /* server restarting */ }
@@ -1223,6 +1230,29 @@ $('#fullCrawlBtn').onclick = async () => {
     if (/session/i.test(ex.message)) openAccount();
   } finally {
     setTimeout(() => (btn.disabled = false), 8000);
+  }
+};
+
+/**
+ * Stops the run in flight. Nothing is rolled back — jobs are written as they are
+ * read — so the confirmation is about the remaining work, not the results.
+ */
+$('#stopBtn').onclick = async () => {
+  const btn = $('#stopBtn');
+  btn.disabled = true;
+  btn.textContent = 'Stopping…';
+  try {
+    const r = await api('/api/scrape/stop', { method: 'POST' });
+    toast(
+      !r.stopped
+        ? 'Nothing was running'
+        : `Stopped${r.queued ? ` · ${r.queued} queued run(s) dropped` : ''} — everything collected so far is kept`,
+    );
+    pollStatus();
+  } catch (ex) {
+    toast(ex.message);
+    btn.disabled = false;
+    btn.textContent = '■ Stop';
   }
 };
 
