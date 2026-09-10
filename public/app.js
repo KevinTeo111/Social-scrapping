@@ -1015,6 +1015,65 @@ function developerRows(devs) {
     .join('')}</div>`;
 }
 
+/**
+ * A 24-hour clock of when something happens, drawn in the viewer's own timezone.
+ *
+ * The server counts by UTC hour because that is the only zone it can be sure
+ * of; the shift here is what makes the answer useful, since "bid at 14:00" only
+ * means anything in the time you keep. The peak is called out in words, because
+ * that is the one number anybody acts on.
+ */
+function hourChart(byHourUtc, label) {
+  if (!byHourUtc?.some((n) => n > 0)) return '<p class="hint">Not enough data yet.</p>';
+
+  const shift = -new Date().getTimezoneOffset() / 60;
+  const local = Array.from({ length: 24 }, (_, h) => {
+    const utc = (((h - shift) % 24) + 24) % 24;
+    return byHourUtc[Math.round(utc)] || 0;
+  });
+
+  const max = Math.max(...local);
+  const total = local.reduce((a, b) => a + b, 0);
+  // The busiest stretch, as a window rather than a single hour: three
+  // consecutive hours is something you can actually plan a morning around.
+  let best = 0;
+  let bestSum = -1;
+  for (let h = 0; h < 24; h++) {
+    const sum = local[h] + local[(h + 1) % 24] + local[(h + 2) % 24];
+    if (sum > bestSum) { bestSum = sum; best = h; }
+  }
+  const pad = (n) => String(n).padStart(2, '0');
+
+  return `
+    <div class="hours">
+      ${local
+        .map(
+          (n, h) => `<div class="hour${n === max ? ' peak' : ''}" title="${pad(h)}:00 — ${n} ${label}">
+              <div class="hour-bar" style="height:${max ? (n / max) * 100 : 0}%"></div>
+            </div>`,
+        )
+        .join('')}
+    </div>
+    <div class="hours-axis">${[0, 6, 12, 18, 23].map((h) => `<span>${pad(h)}</span>`).join('')}</div>
+    <p class="hint">
+      Busiest stretch: <strong>${pad(best)}:00–${pad((best + 3) % 24)}:00</strong> your time
+      (${Math.round((bestSum / total) * 100)}% of all ${label}). Times shown in your own timezone.
+    </p>`;
+}
+
+/** How long ago each client was last seen on Workana. */
+function recencyBars(r) {
+  if (!r || !r.total) return '';
+  const rows = [
+    ['Online in the last hour', r.h1],
+    ['1–6 hours ago', r.h6],
+    ['6–24 hours ago', r.h24],
+    ['1–3 days ago', r.d3],
+    ['More than 3 days ago', r.older],
+  ];
+  return bars(rows.map(([name, n]) => ({ name, n: Number(n) || 0 })), 'name', 'n');
+}
+
 async function showStats() {
   const s = await (await fetch('/api/stats')).json();
   const maxDay = Math.max(1, ...s.byDay.map((d) => d.n));
@@ -1036,6 +1095,20 @@ async function showStats() {
     <div class="section"><h3>By category</h3>${bars(s.byCategory, 'name', 'n')}</div>
     <div class="section"><h3>By client country</h3>${bars(s.byCountry, 'name', 'n')}</div>
     <div class="section"><h3>Most requested skills</h3>${bars(s.topSkills, 'name', 'n')}</div>
+    <div class="section">
+      <h3>When clients are online</h3>
+      ${hourChart(s.clientActivity?.loginByHourUtc, 'client logins')}
+    </div>
+    <div class="section">
+      <h3>When jobs are posted</h3>
+      ${hourChart(s.clientActivity?.postedByHourUtc, 'postings')}
+      <p class="hint">From ${s.clientActivity?.postedSample ?? 0} postings whose age was still
+         given in minutes or hours — anything older only records when we collected it.</p>
+    </div>
+    <div class="section">
+      <h3>How recently the client was last seen</h3>
+      ${recencyBars(s.clientActivity?.recency)}
+    </div>
     <div class="section">
       <h3>Developers you compete with
         <span class="dev-head">seen · in contact · rate</span>

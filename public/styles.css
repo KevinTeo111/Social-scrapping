@@ -624,3 +624,10 @@ tr:hover .j-title .tx { color: var(--accent); }
    rather than one more thing to click. */
 .btn-stop { background: var(--red-soft); color: var(--red); border-color: transparent; }
 .btn-stop:disabled { opacity: .6; }
+
+/* Statistics -> hour-of-day clocks. 24 bars, so they have to stay thin. */
+.hours { display: flex; align-items: flex-end; gap: 2px; height: 90px; margin: 4px 0 2px; }
+.hour { flex: 1; height: 100%; display: flex; align-items: flex-end; background: var(--bg-sunken); border-radius: 2px; }
+.hour-bar { width: 100%; background: var(--accent); border-radius: 2px; min-height: 1px; }
+.hour.peak .hour-bar { background: var(--purple); }
+.hours-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-mute); }

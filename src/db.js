@@ -6,6 +6,8 @@
  */
 import { all, get, run, exec, insertReturning, isPostgres, connect } from './sql.js';
 import { TABLES, SEARCH, LATE_COLUMNS, LATE_INDEXES } from './schema.js';
+import { config } from './config.js';
+import { parseWorkanaClock } from './scraper/parse.js';
 
 /* ------------------------------------------------------------------ */
 /* Schema                                                              */
@@ -121,8 +123,8 @@ export async function upsertClient(client) {
   await run(
     `INSERT INTO clients (id, name, profile_url, avatar_url, country, country_code, rating, rating_count,
                           published_projects, projects_paid, hire_rate, payment_verified, member_since,
-                          last_login, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          last_login, last_login_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        name               = COALESCE(excluded.name, clients.name),
        profile_url        = COALESCE(excluded.profile_url, clients.profile_url),
@@ -137,6 +139,7 @@ export async function upsertClient(client) {
        payment_verified   = GREATEST(excluded.payment_verified, clients.payment_verified),
        member_since       = COALESCE(excluded.member_since, clients.member_since),
        last_login         = COALESCE(excluded.last_login, clients.last_login),
+       last_login_at      = COALESCE(excluded.last_login_at, clients.last_login_at),
        updated_at         = excluded.updated_at`,
     [
       client.id,
@@ -153,6 +156,7 @@ export async function upsertClient(client) {
       client.paymentVerified ? 1 : 0,
       client.memberSince ?? null,
       client.lastLogin ?? null,
+      parseWorkanaClock(client.lastLogin, config.workanaClockOffsetHours),
       new Date().toISOString(),
     ],
   );

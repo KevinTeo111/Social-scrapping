@@ -154,6 +154,16 @@ export const config = {
   emptyPageRetries: num(process.env.EMPTY_PAGE_RETRIES, 2),
 
   /*
+   * Workana prints "Last login" as a wall clock with no zone, and it is not the
+   * browser's: driving the context as Asia/Tokyo still produced timestamps two
+   * hours ahead of UTC. Measuring (login - when we read it) across 1312 clients
+   * put every gap just under 2.00 hours and none above, which is the signature
+   * of a fixed UTC+2 rendering. Re-derive the same way if Workana moves it --
+   * scripts/backfill-last-login.mjs prints the estimate it measures.
+   */
+  workanaClockOffsetHours: num(process.env.WORKANA_CLOCK_OFFSET_HOURS, 2),
+
+  /*
    * Scrape pacing, tuned for throughput: a run should finish in minutes, not
    * tens of minutes, so the board is current rather than perpetually catching
    * up. Both phases fetch in parallel lanes and pause only briefly between

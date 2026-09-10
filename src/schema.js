@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS clients (
   payment_verified    ${T.int} DEFAULT 0,
   member_since        ${T.text},
   last_login          ${T.text},
+  -- The same moment as an instant. The column above is Workana own wall clock
+  -- in a fixed zone, which cannot be compared or bucketed without converting.
+  last_login_at       ${T.text},
   updated_at          ${T.text}
 );
 
@@ -284,6 +287,7 @@ export const LATE_COLUMNS = [
   ['jobs', 'bid_action_url', T.text],
   ['scrape_runs', 'insights', `${T.int} DEFAULT 0`],
   ['scrape_runs', 'user_id', T.int],
+  ['clients', 'last_login_at', T.text],
   ['users', 'workana_proxy', T.text],
   ['users', 'browser_state', T.text],
   ['users', 'browser_state_at', T.text],

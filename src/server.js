@@ -668,6 +668,64 @@ app.get('/api/stats', requireAuth, async (req, res) => {
       LIMIT 40`,
   );
 
+  /*
+   * When clients are actually at their keyboard.
+   *
+   * `last_login_at` is the only absolute clock Workana gives us — everything
+   * else on the board is "3 days ago" resolved against whenever we happened to
+   * scrape, which carries no hour of day worth reading. Hours are returned in
+   * UTC and shifted to the viewer's own zone in the browser, since the useful
+   * question is what time it is where *they* are.
+   *
+   * Posting hours come from the same idea but a poorer source, so they are
+   * restricted to cards that said minutes or hours: a "5 days ago" card would
+   * contribute the hour we scraped it, not the hour it was posted.
+   */
+  const loginHours = await all(
+    `SELECT CAST(substr(last_login_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS n
+       FROM clients WHERE last_login_at IS NOT NULL
+      GROUP BY CAST(substr(last_login_at, 12, 2) AS INTEGER)`,
+  );
+
+  const postHours = await all(
+    `SELECT CAST(substr(published_approx_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS n
+       FROM jobs
+      WHERE published_approx_at IS NOT NULL
+        AND (LOWER(published_text) LIKE '%minute%' OR LOWER(published_text) LIKE '%minuto%'
+          OR LOWER(published_text) LIKE '%hour%'   OR LOWER(published_text) LIKE '%hora%'
+          OR LOWER(published_text) LIKE '%just now%')
+      GROUP BY CAST(substr(published_approx_at, 12, 2) AS INTEGER)`,
+  );
+
+  const spread = (rows) => {
+    const out = Array.from({ length: 24 }, () => 0);
+    for (const r of rows) if (r.hour >= 0 && r.hour < 24) out[r.hour] = Number(r.n);
+    return out;
+  };
+
+  // How stale the client is, which is the part that matters when deciding
+  // whether a posting is still being watched by anyone.
+  const now = Date.now();
+  const at = (h) => new Date(now - h * 3600e3).toISOString();
+  const recency = await get(
+    `SELECT
+       SUM(CASE WHEN last_login_at >= ? THEN 1 ELSE 0 END) AS h1,
+       SUM(CASE WHEN last_login_at >= ? AND last_login_at < ? THEN 1 ELSE 0 END) AS h6,
+       SUM(CASE WHEN last_login_at >= ? AND last_login_at < ? THEN 1 ELSE 0 END) AS h24,
+       SUM(CASE WHEN last_login_at >= ? AND last_login_at < ? THEN 1 ELSE 0 END) AS d3,
+       SUM(CASE WHEN last_login_at <  ? THEN 1 ELSE 0 END) AS older,
+       COUNT(*) AS total
+     FROM clients WHERE last_login_at IS NOT NULL`,
+    [at(1), at(6), at(1), at(24), at(6), at(72), at(24), at(72)],
+  );
+
+  const clientActivity = {
+    loginByHourUtc: spread(loginHours),
+    postedByHourUtc: spread(postHours),
+    postedSample: postHours.reduce((sum, r) => sum + Number(r.n), 0),
+    recency,
+  };
+
   const topSkills = await all('SELECT skills FROM jobs WHERE skills IS NOT NULL');
   const tally = new Map();
   for (const r of topSkills) {
@@ -686,6 +744,7 @@ app.get('/api/stats', requireAuth, async (req, res) => {
     budgets,
     // Marked here rather than in SQL so one shared table serves every member.
     developers: developers.map((d) => ({ ...d, is_me: d.name === req.user.workana_name })),
+    clientActivity,
     topSkills: [...tally.entries()].map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n).slice(0, 20),
   });
 });

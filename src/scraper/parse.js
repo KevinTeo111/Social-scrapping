@@ -564,6 +564,21 @@ export function parseAbsoluteDate(text) {
 export const OWN_BID_LABEL =
   /improve|edit|melhorar|mejorar|ver\s+(propuesta|proposta)|messages|mensajes|mensagens/i;
 
+/**
+ * "September 04, 2026 19:45" -> a real instant.
+ *
+ * The string is a wall clock in Workana's own rendering zone (see
+ * config.workanaClockOffsetHours), so it means nothing until that offset is
+ * applied. Parsing it as if it were UTC and subtracting the offset is exact,
+ * and avoids depending on the host's timezone database.
+ */
+export function parseWorkanaClock(text, offsetHours) {
+  if (!text) return null;
+  const ms = Date.parse(String(text).trim() + ' UTC');
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms - offsetHours * 3600e3).toISOString();
+}
+
 /** Turns a raw list card into the shape `upsertJob` expects. */
 export function normaliseListJob(raw, now = Date.now()) {
   const budget = parseBudget(raw.budgetText);
