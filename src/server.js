@@ -299,6 +299,8 @@ const SORTS = {
   collected: 'ORDER BY j.first_seen_at DESC',
   // Jobs with no reply at all sort last rather than first.
   reply_recent: "ORDER BY COALESCE(j.last_reply_at, '0000') DESC",
+  // Clients we have never seen sort last rather than first.
+  client_online: "ORDER BY COALESCE(c.last_login_at, '0000') DESC",
   client_rating: 'ORDER BY COALESCE(c.rating, -1) DESC, COALESCE(c.projects_paid,0) DESC',
   // Break ties on volume, so a 100% client with 8 paid outranks one with 1.
   hire_rate: 'ORDER BY COALESCE(c.hire_rate, -1) DESC, COALESCE(c.projects_paid, 0) DESC',
@@ -416,6 +418,19 @@ function buildQuery(q, userId) {
     params.push(Number(q.minHireRate));
   }
 
+  /*
+   * Whether the client is still around. Of 1312 clients, five were online in the
+   * last hour and a thousand had not appeared for three days, so this separates
+   * a posting somebody is watching from one nobody will read.
+   *
+   * It is a snapshot from when we last scraped that client, not a live presence
+   * check -- for a client we have not seen in days, it is stale by that much.
+   */
+  if (q.clientSeen) {
+    where.push('c.last_login_at >= ?');
+    params.push(new Date(Date.now() - Number(q.clientSeen) * 3600e3).toISOString());
+  }
+
   if (q.repliedWithin) {
     where.push('j.last_reply_at >= ?');
     params.push(new Date(Date.now() - Number(q.repliedWithin) * 3600e3).toISOString());
@@ -469,6 +484,7 @@ const SELECT_COLUMNS = `
   c.rating AS client_rating, c.published_projects AS client_published, c.projects_paid AS client_paid,
   c.hire_rate AS client_hire_rate, c.payment_verified AS client_verified,
   c.member_since AS client_member_since, c.last_login AS client_last_login,
+  c.last_login_at AS client_last_login_at,
   c.profile_url AS client_profile_url,
   COALESCE(uf.starred, 0) AS starred, COALESCE(uf.hidden, 0) AS hidden, uf.note
 `;

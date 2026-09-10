@@ -147,6 +147,18 @@
       </div>
 
       <div class="f-group">
+        <label class="f-label" for="clientSeen">Client last online</label>
+        <select id="clientSeen" class="f-control">
+          <option value="">Any time</option>
+          <option value="1">Within the hour</option>
+          <option value="6">Last 6 hours</option>
+          <option value="24">Last 24 hours</option>
+          <option value="72">Last 3 days</option>
+          <option value="168">Last week</option>
+        </select>
+      </div>
+
+      <div class="f-group">
         <label class="f-label" for="repliedWithin">Client replied within</label>
         <select id="repliedWithin" class="f-control">
           <option value="">Any time</option>
@@ -193,6 +205,7 @@
           <option value="bids_low">Fewest bids</option>
           <option value="bids_high">Most bids</option>
           <option value="reply_recent">Most recent client reply</option>
+          <option value="client_online">Client online most recently</option>
           <option value="contacts_high">Most contacts</option>
           <option value="hire_rate">Best hire rate</option>
           <option value="client_rating">Best client rating</option>

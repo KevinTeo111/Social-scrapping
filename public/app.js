@@ -24,6 +24,7 @@ const state = {
   hasReply: false,
   hasHired: false,
   repliedWithin: '',
+  clientSeen: '',
   minBudget: '',
   maxBudget: '',
   maxBids: '',
@@ -194,6 +195,7 @@ function queryString() {
   add('maxBids', state.maxBids);
   add('since', state.since);
   add('repliedWithin', state.repliedWithin);
+  add('clientSeen', state.clientSeen);
   for (const k of ['verified', 'noBids', 'notBid', 'starred', 'hasContacts', 'noContacts', 'hasReply', 'hasHired'])
     if (state[k]) p.set(k, '1');
   if (state.country.size) p.set('country', [...state.country].join(','));
@@ -540,6 +542,10 @@ function renderChips() {
   }
   if (state.since)
     add(`Within ${$('#since').selectedOptions[0].textContent}`, () => { state.since = ''; $('#since').value = ''; reload(); });
+  if (state.clientSeen)
+    add(`Client online ${$('#clientSeen').selectedOptions[0].textContent.toLowerCase()}`, () => {
+      state.clientSeen = ''; $('#clientSeen').value = ''; reload();
+    });
   if (state.repliedWithin)
     add(`Replied ${$('#repliedWithin').selectedOptions[0].textContent}`, () => {
       state.repliedWithin = ''; $('#repliedWithin').value = ''; reload();
@@ -849,7 +855,12 @@ function drawerHtml({ job, reviews, insights, otherJobs }) {
         ${kv('Projects paid', job.client_paid)}
         ${kv('Hire rate', job.client_hire_rate != null ? `${Math.round(job.client_hire_rate)}%` : null)}
         ${kv('Member since', esc(job.client_member_since))}
-        ${kv('Last login', esc(job.client_last_login))}
+        ${kv(
+          'Last online',
+          job.client_last_login_at
+            ? `${esc(timeAgo(job.client_last_login_at))}<span style="color:var(--text-mute)"> · ${esc(fullStamp(job.client_last_login_at))}</span>`
+            : esc(job.client_last_login),
+        )}
         ${kv('Profile', job.client_profile_url ? `<a href="${esc(job.client_profile_url)}" target="_blank" rel="noopener">View ↗</a>` : null)}
       </div>
     </div>
@@ -1223,6 +1234,7 @@ $('#typeSeg').onclick = (e) => {
 $('#sort').onchange = (e) => { state.sort = e.target.value; reload(); };
 $('#since').onchange = (e) => { state.since = e.target.value; reload(); };
 $('#repliedWithin').onchange = (e) => { state.repliedWithin = e.target.value; reload(); };
+$('#clientSeen').onchange = (e) => { state.clientSeen = e.target.value; reload(); };
 
 for (const id of ['minBudget', 'maxBudget', 'maxBids']) {
   $(`#${id}`).oninput = (e) => { state[id] = e.target.value; defer(reload); };
@@ -1240,12 +1252,13 @@ for (const id of ['starred', 'verified', 'noBids', 'notBid', 'hasContacts', 'noC
 $('#clearFilters').onclick = () => {
   Object.assign(state, {
     search: '', minBudget: '', maxBudget: '', maxBids: '', since: '', type: '',
-    repliedWithin: '', verified: false, noBids: false, notBid: false, starred: false,
+    repliedWithin: '', clientSeen: '', verified: false, noBids: false, notBid: false, starred: false,
     hasContacts: false, noContacts: false, hasReply: false, hasHired: false, offset: 0,
   });
   state.country.clear(); state.category.clear(); state.skill.clear();
   $('#search').value = '';
-  for (const id of ['minBudget', 'maxBudget', 'maxBids', 'since', 'repliedWithin']) $(`#${id}`).value = '';
+  for (const id of ['minBudget', 'maxBudget', 'maxBids', 'since', 'repliedWithin', 'clientSeen'])
+    $(`#${id}`).value = '';
   for (const id of ['starred', 'verified', 'noBids', 'notBid', 'hasContacts', 'noContacts', 'hasReply', 'hasHired'])
     $(`#${id}`).checked = false;
   document.querySelectorAll('.seg-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
