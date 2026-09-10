@@ -71,7 +71,7 @@ const pagesOf = (options) => Number(options?.pages) || config.refreshPages;
 let cancelling = false;
 let activeBrowser = null;
 
-export const isCancelling = () => cancelling;
+export const isCancelling = () => cancelling && Boolean(running);
 
 /**
  * A run walks list pages, then detail pages, then insight pages, and the whole
@@ -136,8 +136,10 @@ export async function stopScraping() {
   if (running) {
     cancelling = true;
     // Closing the browser is what interrupts an in-flight navigation; without
-    // it the run would idle until whatever it was waiting on timed out.
-    if (activeBrowser) await activeBrowser.close().catch(() => {});
+    // it the run would idle until whatever it was waiting on timed out. Not
+    // awaited: the flag has already done the deciding, and a close that hangs
+    // must not hang the request that asked for the stop.
+    activeBrowser?.close().catch(() => {});
   }
 
   return stopped;
@@ -147,6 +149,7 @@ function next() {
   running = null;
   runningUserId = null;
   runningPages = 0;
+  cancelling = false;
   const item = pending.shift();
   if (!item) return;
   runningUserId = item.userId;
