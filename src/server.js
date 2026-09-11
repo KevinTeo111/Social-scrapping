@@ -440,6 +440,15 @@ function buildQuery(q, userId) {
    * anybody else's. `uf` is joined on this member's id, so these stay private
    * the same way stars and notes do.
    */
+  /*
+   * The stages a proposal passes through, each from this member's own overlay:
+   * sent, opened by the client, favourited, answered. Filtering on them is how
+   * you find the ones worth chasing rather than re-reading all 157.
+   */
+  if (q.myBid === '1') where.push('COALESCE(uf.has_own_bid, 0) = 1');
+  if (q.myRead === '1') where.push('COALESCE(uf.proposal_read, 0) = 1');
+  if (q.myFavourite === '1') where.push('COALESCE(uf.client_favorite, 0) = 1');
+
   if (q.myContact === '1') where.push('COALESCE(uf.was_contacted, 0) = 1');
   if (q.noMyContact === '1') where.push('COALESCE(uf.was_contacted, 0) = 0');
 

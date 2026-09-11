@@ -25,6 +25,9 @@ const state = {
   hasHired: false,
   repliedWithin: '',
   clientSeen: '',
+  myBid: false,
+  myRead: false,
+  myFavourite: false,
   myContact: false,
   noMyContact: false,
   minBudget: '',
@@ -199,7 +202,7 @@ function queryString() {
   add('repliedWithin', state.repliedWithin);
   add('clientSeen', state.clientSeen);
   for (const k of ['verified', 'noBids', 'notBid', 'starred', 'hasContacts', 'noContacts', 'hasReply', 'hasHired',
-    'myContact', 'noMyContact'])
+    'myContact', 'noMyContact', 'myBid', 'myRead', 'myFavourite'])
     if (state[k]) p.set(k, '1');
   if (state.country.size) p.set('country', [...state.country].join(','));
   if (state.category.size) p.set('category', [...state.category].join(','));
@@ -567,6 +570,9 @@ function renderChips() {
   if (state.since)
     add(`Within ${$('#since').selectedOptions[0].textContent}`, () => { state.since = ''; $('#since').value = ''; reload(); });
   for (const [key, label] of [
+    ['myBid', '✓ Bid by me'],
+    ['myRead', '👁 Proposal read'],
+    ['myFavourite', '★ Client favourited me'],
     ['myContact', '✉ The client contacted me'],
     ['noMyContact', 'No contact from the client yet'],
   ]) {
@@ -1283,7 +1289,7 @@ $('#sort').onchange = (e) => { state.sort = e.target.value; reload(); };
 $('#since').onchange = (e) => { state.since = e.target.value; reload(); };
 $('#repliedWithin').onchange = (e) => { state.repliedWithin = e.target.value; reload(); };
 $('#clientSeen').onchange = (e) => { state.clientSeen = e.target.value; reload(); };
-for (const id of ['myContact', 'noMyContact']) {
+for (const id of ['myContact', 'noMyContact', 'myBid', 'myRead', 'myFavourite']) {
   $(`#${id}`).onchange = (e) => { state[id] = e.target.checked; reload(); };
 }
 
@@ -1303,7 +1309,8 @@ for (const id of ['starred', 'verified', 'noBids', 'notBid', 'hasContacts', 'noC
 $('#clearFilters').onclick = () => {
   Object.assign(state, {
     search: '', minBudget: '', maxBudget: '', maxBids: '', since: '', type: '',
-    repliedWithin: '', clientSeen: '', myContact: false, noMyContact: false, verified: false, noBids: false, notBid: false, starred: false,
+    repliedWithin: '', clientSeen: '', myBid: false, myRead: false, myFavourite: false,
+    myContact: false, noMyContact: false, verified: false, noBids: false, notBid: false, starred: false,
     hasContacts: false, noContacts: false, hasReply: false, hasHired: false, offset: 0,
   });
   state.country.clear(); state.category.clear(); state.skill.clear();
@@ -1311,7 +1318,7 @@ $('#clearFilters').onclick = () => {
   for (const id of ['minBudget', 'maxBudget', 'maxBids', 'since', 'repliedWithin', 'clientSeen'])
     $(`#${id}`).value = '';
   for (const id of ['starred', 'verified', 'noBids', 'notBid', 'hasContacts', 'noContacts', 'hasReply', 'hasHired',
-    'myContact', 'noMyContact'])
+    'myContact', 'noMyContact', 'myBid', 'myRead', 'myFavourite'])
     $(`#${id}`).checked = false;
   document.querySelectorAll('.seg-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
   ['category', 'country', 'skill'].forEach((n) => { updateFacetCount(n); repaint(n); });
