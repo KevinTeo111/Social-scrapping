@@ -25,6 +25,8 @@ const state = {
   hasHired: false,
   repliedWithin: '',
   clientSeen: '',
+  myContact: false,
+  noMyContact: false,
   minBudget: '',
   maxBudget: '',
   maxBids: '',
@@ -196,7 +198,8 @@ function queryString() {
   add('since', state.since);
   add('repliedWithin', state.repliedWithin);
   add('clientSeen', state.clientSeen);
-  for (const k of ['verified', 'noBids', 'notBid', 'starred', 'hasContacts', 'noContacts', 'hasReply', 'hasHired'])
+  for (const k of ['verified', 'noBids', 'notBid', 'starred', 'hasContacts', 'noContacts', 'hasReply', 'hasHired',
+    'myContact', 'noMyContact'])
     if (state[k]) p.set(k, '1');
   if (state.country.size) p.set('country', [...state.country].join(','));
   if (state.category.size) p.set('category', [...state.category].join(','));
@@ -308,6 +311,16 @@ function rowFor(job) {
   tx.title = job.title;
   wrap.appendChild(tx);
   if (job.has_own_bid) wrap.appendChild(el('span', 'tag mine', '✓ bid'));
+  /*
+   * Contact is a step past bidding: there is a conversation open with this
+   * client. Shown only when it is not already implied by the bid tag sitting
+   * next to it, so a row does not carry two marks that say the same thing.
+   */
+  if (job.was_contacted && !job.has_own_bid) {
+    const t = el('span', 'tag contacted', '✉ in contact');
+    t.title = 'You have a conversation open with this client';
+    wrap.appendChild(t);
+  }
   tdTitle.appendChild(wrap);
   tr.appendChild(tdTitle);
 
@@ -542,6 +555,12 @@ function renderChips() {
   }
   if (state.since)
     add(`Within ${$('#since').selectedOptions[0].textContent}`, () => { state.since = ''; $('#since').value = ''; reload(); });
+  for (const [key, label] of [
+    ['myContact', '✉ I am in contact'],
+    ['noMyContact', 'No contact from me yet'],
+  ]) {
+    if (state[key]) add(label, () => { state[key] = false; $(`#${key}`).checked = false; reload(); });
+  }
   if (state.clientSeen)
     add(`Client online ${$('#clientSeen').selectedOptions[0].textContent.toLowerCase()}`, () => {
       state.clientSeen = ''; $('#clientSeen').value = ''; reload();
@@ -793,6 +812,7 @@ function drawerHtml({ job, reviews, insights, otherJobs }) {
       ${job.subcategory ? `<span class="pill">${esc(job.subcategory)}</span>` : ''}
       ${job.is_featured ? '<span class="pill gold">🏆 Workana\'s selection</span>' : ''}
       ${job.has_own_bid ? '<span class="pill mine">✓ You bid on this</span>' : ''}
+      ${job.was_contacted ? '<span class="pill mine">✉ You are in contact with this client</span>' : ''}
       ${contacted.length ? `<span class="pill hot">${contacted.length} in contact</span>` : ''}
       <a class="btn btn-primary" href="${esc(job.url)}" target="_blank" rel="noopener">Open on Workana ↗</a>
       ${
@@ -1235,6 +1255,9 @@ $('#sort').onchange = (e) => { state.sort = e.target.value; reload(); };
 $('#since').onchange = (e) => { state.since = e.target.value; reload(); };
 $('#repliedWithin').onchange = (e) => { state.repliedWithin = e.target.value; reload(); };
 $('#clientSeen').onchange = (e) => { state.clientSeen = e.target.value; reload(); };
+for (const id of ['myContact', 'noMyContact']) {
+  $(`#${id}`).onchange = (e) => { state[id] = e.target.checked; reload(); };
+}
 
 for (const id of ['minBudget', 'maxBudget', 'maxBids']) {
   $(`#${id}`).oninput = (e) => { state[id] = e.target.value; defer(reload); };
@@ -1252,14 +1275,15 @@ for (const id of ['starred', 'verified', 'noBids', 'notBid', 'hasContacts', 'noC
 $('#clearFilters').onclick = () => {
   Object.assign(state, {
     search: '', minBudget: '', maxBudget: '', maxBids: '', since: '', type: '',
-    repliedWithin: '', clientSeen: '', verified: false, noBids: false, notBid: false, starred: false,
+    repliedWithin: '', clientSeen: '', myContact: false, noMyContact: false, verified: false, noBids: false, notBid: false, starred: false,
     hasContacts: false, noContacts: false, hasReply: false, hasHired: false, offset: 0,
   });
   state.country.clear(); state.category.clear(); state.skill.clear();
   $('#search').value = '';
   for (const id of ['minBudget', 'maxBudget', 'maxBids', 'since', 'repliedWithin', 'clientSeen'])
     $(`#${id}`).value = '';
-  for (const id of ['starred', 'verified', 'noBids', 'notBid', 'hasContacts', 'noContacts', 'hasReply', 'hasHired'])
+  for (const id of ['starred', 'verified', 'noBids', 'notBid', 'hasContacts', 'noContacts', 'hasReply', 'hasHired',
+    'myContact', 'noMyContact'])
     $(`#${id}`).checked = false;
   document.querySelectorAll('.seg-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
   ['category', 'country', 'skill'].forEach((n) => { updateFacetCount(n); repaint(n); });

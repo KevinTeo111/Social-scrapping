@@ -631,3 +631,7 @@ tr:hover .j-title .tx { color: var(--accent); }
 .hour-bar { width: 100%; background: var(--accent); border-radius: 2px; min-height: 1px; }
 .hour.peak .hour-bar { background: var(--purple); }
 .hours-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-mute); }
+
+/* A conversation is open with this client — mine alone, like every other flag
+   in the per-member overlay. */
+.tag.contacted { background: var(--accent-soft); color: var(--accent); }

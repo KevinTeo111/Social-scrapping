@@ -435,6 +435,14 @@ function buildQuery(q, userId) {
     where.push('j.last_reply_at >= ?');
     params.push(new Date(Date.now() - Number(q.repliedWithin) * 3600e3).toISOString());
   }
+  /*
+   * The viewer's own dealings with the client, from their own overlay -- never
+   * anybody else's. `uf` is joined on this member's id, so these stay private
+   * the same way stars and notes do.
+   */
+  if (q.myContact === '1') where.push('COALESCE(uf.was_contacted, 0) = 1');
+  if (q.noMyContact === '1') where.push('COALESCE(uf.was_contacted, 0) = 0');
+
   if (q.starred === '1') where.push('COALESCE(uf.starred, 0) = 1');
   if (q.notBid === '1') where.push('COALESCE(uf.has_own_bid, 0) = 0');
   if (q.hidden !== '1') where.push('COALESCE(uf.hidden, 0) = 0');
