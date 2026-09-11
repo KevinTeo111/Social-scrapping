@@ -49,6 +49,13 @@ export async function fetchMyProposals(page, { maxPages = 60, onProgress = () =>
     if (batch.length === 0) break;
 
     for (const job of batch) {
+      /*
+       * The inbox is every conversation, which would include projects this
+       * account posted itself. None exist today -- all 201 rows came back
+       * is_owner false -- but counting one as a proposal would be wrong, and the
+       * field is there to be read.
+       */
+      if (job.is_owner) continue;
       projects.push({
         slug: job.slug,
         title: job.name,
