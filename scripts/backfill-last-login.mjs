@@ -28,17 +28,48 @@ const gaps = rows
   .filter(Number.isFinite)
   .sort((a, b) => b - a);
 
+/*
+ * The maximum alone is a bad estimator: one client whose profile reports a
+ * nonsense login, or one row whose read time is older than the value stored
+ * beside it, drags it up on its own. A real offset shows as a *cluster* of gaps
+ * pressing right up against a whole number with nothing beyond it, because
+ * clients keep logging in until the moment the page is read and never after.
+ *
+ * So the top of the distribution is printed, and the offset is only asserted
+ * when several rows agree on it.
+ */
 const measured = gaps.length ? Math.ceil(gaps[0]) : null;
+const supporting = measured === null ? 0 : gaps.filter((g) => g > measured - 1 && g <= measured).length;
+
 console.log(`clients with a last login : ${rows.length}`);
 console.log(`largest (login - read) gap: ${gaps[0]?.toFixed(2)}h`);
+console.log(`top gaps                  : ${gaps.slice(0, 8).map((g) => g.toFixed(2)).join(', ')}`);
+console.log(`rows in the hour below it : ${supporting}`);
 console.log(`measured offset           : UTC+${measured}`);
 console.log(`configured offset         : UTC+${config.workanaClockOffsetHours}`);
+
 if (measured !== null && measured !== config.workanaClockOffsetHours) {
-  console.log(
-    `\n  These disagree. Set WORKANA_CLOCK_OFFSET_HOURS=${measured} and re-run,\n` +
-      '  or every hour-of-day statistic will be shifted.',
-  );
+  if (supporting >= 5) {
+    console.log(
+      `
+  ${supporting} rows cluster just under ${measured}h, which is what a real offset
+` +
+        `  looks like. Set WORKANA_CLOCK_OFFSET_HOURS=${measured} and re-run, or every
+` +
+        '  hour-of-day statistic will be shifted.',
+    );
+  } else {
+    console.log(
+      `
+  Only ${supporting} row(s) sit near ${measured}h, so that looks like one stray
+` +
+        `  timestamp rather than the real offset. Keeping UTC+${config.workanaClockOffsetHours}.
+` +
+        '  Re-run once more clients have been scraped for a firmer reading.',
+    );
+  }
 }
+
 
 const todo = rows.filter((r) => !r.last_login_at);
 console.log(`\nrows still needing a timestamp: ${todo.length}`);
