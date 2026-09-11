@@ -312,12 +312,13 @@ function rowFor(job) {
   wrap.appendChild(tx);
   if (job.has_own_bid) wrap.appendChild(el('span', 'tag mine', '✓ bid'));
   /*
-   * Contact is a step past bidding: there is a conversation open with this
-   * client. Shown only when it is not already implied by the bid tag sitting
-   * next to it, so a row does not carry two marks that say the same thing.
+   * Contact is a step past bidding, and the two are shown together: a bid with a
+   * reply is not the same row as a bid into silence. Next to the bid tag the
+   * envelope carries the meaning on its own, so the words are dropped and only
+   * a standalone contact keeps them.
    */
-  if (job.was_contacted && !job.has_own_bid) {
-    const t = el('span', 'tag contacted', '✉ in contact');
+  if (job.was_contacted) {
+    const t = el('span', 'tag contacted', job.has_own_bid ? '✉' : '✉ in contact');
     t.title = 'You have a conversation open with this client';
     wrap.appendChild(t);
   }
