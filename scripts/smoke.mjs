@@ -119,6 +119,22 @@ await check('drawer: job row', () =>
 await check('drawer: client reviews', () =>
   all('SELECT * FROM client_reviews ORDER BY id DESC LIMIT 25'),
 );
+// Columns added after the first Postgres deploy. CREATE TABLE IF NOT EXISTS
+// leaves an existing table alone, so these exist only if initDatabase() added
+// them — checking them here is what proves the migration actually ran.
+await check('late columns: client last login', () =>
+  get('SELECT COUNT(last_login_at) AS with_at, COUNT(*) AS total FROM clients'),
+);
+await check('late columns: my proposal state', () =>
+  get(`SELECT SUM(has_own_bid) AS bid, SUM(was_contacted) AS contacted,
+              SUM(proposal_read) AS read_, SUM(client_favorite) AS favourite,
+              SUM(proposal_selected) AS selected
+         FROM user_jobs`),
+);
+await check('late columns: bid action url', () =>
+  get('SELECT COUNT(bid_action_url) AS n FROM jobs'),
+);
+
 await check('stats: developers', () =>
   all(`SELECT freelancer AS name, COUNT(*) AS appearances, SUM(in_contact) AS contacted,
               MAX(rating) AS rating, MAX(projects_done) AS projects_done,
