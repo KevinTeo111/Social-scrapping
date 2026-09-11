@@ -298,13 +298,18 @@ async function runScrape({
         if (job.client) await upsertClient(job.client);
         const result = await upsertJob(job);
 
-        // "I bid on this" and "the client contacted me" are true of the account
-        // that fetched the page, not of the posting, so they belong to the user.
+        /*
+         * True of the account that fetched the page, not of the posting, so it
+         * belongs to the user rather than the job.
+         *
+         * Only the bid, though. The card's contact marker appears as soon as a
+         * proposal opens a thread -- it says a conversation exists, not that the
+         * client ever wrote -- so it is read as further evidence of a bid. Whether
+         * the client actually made contact comes from my own row on the insights
+         * page, which is the only place Workana states it.
+         */
         if (userId && (job.hasOwnBid || job.wasContacted)) {
-          await upsertUserJob(userId, job.slug, {
-            hasOwnBid: job.hasOwnBid,
-            wasContacted: job.wasContacted,
-          });
+          await upsertUserJob(userId, job.slug, { hasOwnBid: true });
         }
 
         stats[result] += 1;
@@ -467,17 +472,25 @@ export async function fetchInsightsOn(page, slug, userId = null) {
    * projects where the panel is missing or worded in a language the parser has
    * not seen. Both beat reading the button label, which is a guess by comparison.
    */
-  if (userId) {
-    const me = (await findUser(userId))?.workana_name;
-    const amContender =
-      me && raw.proposals?.some((p) => p.freelancer && p.freelancer.trim() === me.trim());
-
-    if (raw.ownBudget || amContender) {
-      await upsertUserJob(userId, slug, {
-        ownBudget: raw.ownBudget ?? undefined,
-        hasOwnBid: true,
-      });
-    }
+  /*
+   * My own row on this page is the only place Workana says what the client has
+   * done about *me*: read the proposal, favourited it, opened contact, picked
+   * it. "In contact" is the one that matters -- the job card cannot supply it,
+   * because its button flips to "Go to messages" the moment a proposal opens a
+   * thread, whether or not the client ever wrote back.
+   */
+  if (userId && raw.self) {
+    await upsertUserJob(userId, slug, {
+      hasOwnBid: raw.self.proposalSent || Boolean(raw.ownBudget) || undefined,
+      wasContacted: raw.self.inContact,
+      proposalRead: raw.self.proposalRead,
+      clientFavorite: raw.self.isFavorite,
+      proposalSelected: raw.self.proposalSelected,
+      ownBudget: raw.ownBudget ?? undefined,
+    });
+  } else if (userId && raw.ownBudget) {
+    // No row rendered, but the "Your budget" panel still proves the proposal.
+    await upsertUserJob(userId, slug, { hasOwnBid: true, ownBudget: raw.ownBudget });
   }
 
   return raw;

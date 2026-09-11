@@ -207,6 +207,11 @@ CREATE TABLE IF NOT EXISTS user_jobs (
   has_own_bid   ${T.int} DEFAULT 0,
   was_contacted ${T.int} DEFAULT 0,
   own_budget    ${T.text},
+  -- Straight from my own row on the Project Insights page, which is the only
+  -- place Workana states any of this about me.
+  proposal_read     ${T.int} DEFAULT 0,
+  client_favorite   ${T.int} DEFAULT 0,
+  proposal_selected ${T.int} DEFAULT 0,
   starred       ${T.int} DEFAULT 0,
   hidden        ${T.int} DEFAULT 0,
   note          ${T.text},
@@ -288,6 +293,9 @@ export const LATE_COLUMNS = [
   ['scrape_runs', 'insights', `${T.int} DEFAULT 0`],
   ['scrape_runs', 'user_id', T.int],
   ['clients', 'last_login_at', T.text],
+  ['user_jobs', 'proposal_read', `${T.int} DEFAULT 0`],
+  ['user_jobs', 'client_favorite', `${T.int} DEFAULT 0`],
+  ['user_jobs', 'proposal_selected', `${T.int} DEFAULT 0`],
   ['users', 'workana_proxy', T.text],
   ['users', 'browser_state', T.text],
   ['users', 'browser_state_at', T.text],

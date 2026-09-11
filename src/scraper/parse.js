@@ -321,6 +321,39 @@ export function pageExtractInsights() {
     /([A-Z]{3}\s*[\d.,]+)\s*\n\s*(?:your budget|tu presupuesto|seu or[çc]amento)/i,
   );
 
+  /*
+   * The viewer's own row, which is where the real answer lives.
+   *
+   * It is not a `.contender-card` — Workana renders it as `.row.bid.item.my-bid`
+   * above the list — so the loop below never saw it, and "did the client write to
+   * me" had to be guessed from the job card's button instead. That button says
+   * "Go to messages" the moment a proposal opens a thread, which is not the same
+   * question at all.
+   *
+   * The badges carry it exactly. Inactive ones are present but carry an inline
+   * `display: none`, the same convention as the contender cards, so the style is
+   * what decides rather than the badge merely existing. `offsetParent` cannot be
+   * used here: this row can sit inside a tab pane that is itself hidden.
+   */
+  const myRow = document.querySelector('.my-bid');
+  let myBid = null;
+  if (myRow) {
+    const badges = [...myRow.querySelectorAll('.badge')];
+    const on = (re) => badges.some((b) => re.test(b.textContent || '') && b.style.display !== 'none');
+    const nameEl = myRow.querySelector('.user-name a');
+    const rankEl = myRow.querySelector('.ranking, .user-ranking, small');
+    myBid = {
+      freelancer: text(nameEl),
+      profileUrl: abs(nameEl?.getAttribute('href')),
+      ranking: text(rankEl),
+      proposalSent: on(/proposal sent|propuesta enviada|proposta enviada/i),
+      proposalRead: on(/proposal read|propuesta le[ií]da|proposta lida/i),
+      inContact: on(/in contact|en contacto|em contato/i),
+      isFavorite: on(/favorite|favorito/i),
+      proposalSelected: on(/proposal selected|propuesta seleccionada|proposta selecionada/i),
+    };
+  }
+
   const proposals = [];
   for (const card of document.querySelectorAll('.contender-card')) {
     const nameLink = card.querySelector('.user-name a[href*="/freelancer/"]');
@@ -407,6 +440,7 @@ export function pageExtractInsights() {
   return {
     averageRate,
     ownBudget: ownBudget ? ownBudget[1].replace(/\s+/g, ' ').trim() : null,
+    self: myBid,
     proposals,
     contactsCount: proposals.filter((p) => p.inContact).length,
     preSelectedCount: proposals.filter((p) => p.preSelected).length,

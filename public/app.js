@@ -318,8 +318,18 @@ function rowFor(job) {
    * a standalone contact keeps them.
    */
   if (job.was_contacted) {
-    const t = el('span', 'tag contacted', job.has_own_bid ? '✉' : '✉ in contact');
-    t.title = 'You have a conversation open with this client';
+    const t = el('span', 'tag contacted', '✉ contacted');
+    t.title = 'The client has opened contact with you on this project';
+    wrap.appendChild(t);
+  }
+  /*
+   * Read but no contact is the other state worth seeing: the proposal landed and
+   * was opened, and the client has not written. Shown only when it is not already
+   * superseded by contact.
+   */
+  if (job.proposal_read && !job.was_contacted) {
+    const t = el('span', 'tag read', '👁 read');
+    t.title = 'The client opened your proposal but has not made contact';
     wrap.appendChild(t);
   }
   tdTitle.appendChild(wrap);
@@ -557,8 +567,8 @@ function renderChips() {
   if (state.since)
     add(`Within ${$('#since').selectedOptions[0].textContent}`, () => { state.since = ''; $('#since').value = ''; reload(); });
   for (const [key, label] of [
-    ['myContact', '✉ I am in contact'],
-    ['noMyContact', 'No contact from me yet'],
+    ['myContact', '✉ The client contacted me'],
+    ['noMyContact', 'No contact from the client yet'],
   ]) {
     if (state[key]) add(label, () => { state[key] = false; $(`#${key}`).checked = false; reload(); });
   }
@@ -813,7 +823,10 @@ function drawerHtml({ job, reviews, insights, otherJobs }) {
       ${job.subcategory ? `<span class="pill">${esc(job.subcategory)}</span>` : ''}
       ${job.is_featured ? '<span class="pill gold">🏆 Workana\'s selection</span>' : ''}
       ${job.has_own_bid ? '<span class="pill mine">✓ You bid on this</span>' : ''}
-      ${job.was_contacted ? '<span class="pill mine">✉ You are in contact with this client</span>' : ''}
+      ${job.was_contacted ? '<span class="pill mine">✉ The client has contacted you</span>' : ''}
+      ${job.proposal_read ? '<span class="pill">👁 Proposal read</span>' : ''}
+      ${job.client_favorite ? '<span class="pill">★ Marked favourite by the client</span>' : ''}
+      ${job.proposal_selected ? '<span class="pill mine">✓ Proposal selected</span>' : ''}
       ${contacted.length ? `<span class="pill hot">${contacted.length} in contact</span>` : ''}
       <a class="btn btn-primary" href="${esc(job.url)}" target="_blank" rel="noopener">Open on Workana ↗</a>
       ${

@@ -396,11 +396,21 @@ export async function upsertUserJob(userId, slug, fields = {}) {
 
   await run(
     `INSERT INTO user_jobs (user_id, job_slug, has_own_bid, was_contacted, own_budget,
+                            proposal_read, client_favorite, proposal_selected,
                             starred, hidden, note, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(user_id, job_slug) DO UPDATE SET
        has_own_bid   = COALESCE(excluded.has_own_bid,   user_jobs.has_own_bid),
-       was_contacted = COALESCE(excluded.was_contacted, user_jobs.was_contacted),
+       /*
+        * COALESCE means "leave it alone if the caller said nothing". Passing an
+        * explicit false still turns these off, which is what the insights page
+        * needs: it states the client's current position, so a badge that goes
+        * away has to be able to clear the flag.
+        */
+       was_contacted     = COALESCE(excluded.was_contacted, user_jobs.was_contacted),
+       proposal_read     = COALESCE(excluded.proposal_read, user_jobs.proposal_read),
+       client_favorite   = COALESCE(excluded.client_favorite, user_jobs.client_favorite),
+       proposal_selected = COALESCE(excluded.proposal_selected, user_jobs.proposal_selected),
        own_budget    = COALESCE(excluded.own_budget,    user_jobs.own_budget),
        starred       = COALESCE(excluded.starred,       user_jobs.starred),
        hidden        = COALESCE(excluded.hidden,        user_jobs.hidden),
@@ -412,6 +422,9 @@ export async function upsertUserJob(userId, slug, fields = {}) {
       bit(fields.hasOwnBid),
       bit(fields.wasContacted),
       fields.ownBudget ?? null,
+      bit(fields.proposalRead),
+      bit(fields.clientFavorite),
+      bit(fields.proposalSelected),
       bit(fields.starred),
       bit(fields.hidden),
       fields.note === undefined ? null : String(fields.note),
