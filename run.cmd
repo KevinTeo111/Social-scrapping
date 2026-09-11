@@ -13,6 +13,7 @@ rem   run.cmd smoke           run every query against the configured database
 rem   run.cmd last-login      backfill clients.last_login_at      (add --apply)
 rem   run.cmd my-bids         rebuild my proposal state           (add --apply)
 rem   run.cmd clean-tests     remove accounts left by the suites
+rem   run.cmd reset           empty the database (needs --scope, see the script)
 rem
 rem Set DATABASE_URL to work against Postgres instead of the local file.
 rem my-bids also needs APP_SECRET: it decrypts a stored Workana session in
@@ -42,6 +43,7 @@ if /i "%TASK%"=="smoke"       set "SCRIPT=scripts\smoke.mjs"
 if /i "%TASK%"=="last-login"  set "SCRIPT=scripts\backfill-last-login.mjs"
 if /i "%TASK%"=="my-bids"     set "SCRIPT=scripts\refresh-my-bids.mjs"
 if /i "%TASK%"=="clean-tests" set "SCRIPT=scripts\clean-test-accounts.mjs"
+if /i "%TASK%"=="reset"       set "SCRIPT=scripts\reset-database.mjs"
 
 if "%SCRIPT%"=="" (
   echo Unknown task "%TASK%".
