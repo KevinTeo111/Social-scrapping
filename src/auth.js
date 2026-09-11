@@ -236,6 +236,15 @@ export function describeProxy(url) {
   }
 }
 
+/** Stores the proposal count read from the member's own inbox. */
+export async function recordProposalCount(userId, total) {
+  await run('UPDATE users SET proposals_total = ?, proposals_synced_at = ? WHERE id = ?', [
+    total,
+    new Date().toISOString(),
+    userId,
+  ]);
+}
+
 export async function recordCookieCheck(userId, { valid, workanaName }) {
   await run('UPDATE users SET cookies_valid = ?, workana_name = COALESCE(?, workana_name) WHERE id = ?', [
     valid ? 1 : 0,
@@ -256,6 +265,8 @@ export function publicUser(user) {
     hasCookies: Boolean(user.workana_cookies),
     cookiesUpdatedAt: user.cookies_updated_at,
     cookiesValid: user.cookies_valid === null ? null : Boolean(user.cookies_valid),
+    proposalsTotal: user.proposals_total ?? null,
+    proposalsSyncedAt: user.proposals_synced_at ?? null,
     proxy: user.workana_proxy ? describeProxy(decrypt(user.workana_proxy)) : null,
     createdAt: user.created_at,
   };

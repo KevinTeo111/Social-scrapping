@@ -763,6 +763,14 @@ app.get('/api/stats', requireAuth, async (req, res) => {
     for (const s of list) if (s?.name) tally.set(s.name, (tally.get(s.name) || 0) + 1);
   }
 
+  /*
+   * Two different counts, and the gap between them is the point: the board only
+   * knows about bids on jobs it has scraped, while Workana's inbox remembers
+   * every proposal ever sent. See scripts/sync-proposals.mjs.
+   */
+  totals.proposals_total = req.user.proposals_total ?? null;
+  totals.proposals_synced_at = req.user.proposals_synced_at ?? null;
+
   res.json({
     totals,
     byCategory,

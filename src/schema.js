@@ -189,6 +189,10 @@ CREATE TABLE IF NOT EXISTS users (
   -- belongs with the rest of the member's session data.
   browser_state      ${T.text},
   browser_state_at   ${T.text},
+  -- Proposals this account has written, counted from Workana's own inbox. The
+  -- board can only see the ones whose job is still listed, which is fewer.
+  proposals_total    ${T.int},
+  proposals_synced_at ${T.text},
   is_admin           ${T.int} DEFAULT 0,
   created_at         ${T.text} NOT NULL,
   last_login_at      ${T.text}
@@ -299,6 +303,8 @@ export const LATE_COLUMNS = [
   ['users', 'workana_proxy', T.text],
   ['users', 'browser_state', T.text],
   ['users', 'browser_state_at', T.text],
+  ['users', 'proposals_total', T.int],
+  ['users', 'proposals_synced_at', T.text],
   ['job_insights', 'rating', T.real],
   ['job_insights', 'is_hero', `${T.int} DEFAULT 0`],
   ['job_insights', 'is_recommended', `${T.int} DEFAULT 0`],

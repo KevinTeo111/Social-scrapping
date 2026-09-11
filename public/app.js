@@ -1132,6 +1132,20 @@ async function showStats() {
       <div class="stat-card"><div class="n">${s.totals.no_bids}</div><div class="l">With zero bids</div></div>
       <div class="stat-card"><div class="n">${s.totals.enriched}</div><div class="l">Fully enriched</div></div>
       <div class="stat-card"><div class="n">${s.totals.own_bids}</div><div class="l">You bid on</div></div>
+      ${
+        /*
+         * The lifetime figure, which is larger than the one beside it: the board
+         * cannot see a bid on a job that has already left the feed.
+         */
+        s.totals.proposals_total != null
+          ? `<div class="stat-card" title="Counted from your Workana inbox on ${esc(fullStamp(s.totals.proposals_synced_at))}">
+               <div class="n">${s.totals.proposals_total}</div>
+               <div class="l">Proposals written</div>
+             </div>`
+          : `<div class="stat-card muted" title="Run: run.cmd proposals --email you@example.com --apply">
+               <div class="n">—</div><div class="l">Proposals written</div>
+             </div>`
+      }
     </div>
     <div class="section"><h3>Jobs per day</h3>
       <div class="spark">${s.byDay.map((d) => `<div style="height:${(d.n / maxDay) * 100}%" title="${d.day}: ${d.n}"></div>`).join('')}</div>

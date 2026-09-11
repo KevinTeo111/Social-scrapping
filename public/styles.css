@@ -637,3 +637,5 @@ tr:hover .j-title .tx { color: var(--accent); }
 .tag.contacted { background: var(--accent-soft); color: var(--accent); }
 /* Proposal opened but no reply — a weaker signal than contact, drawn quieter. */
 .tag.read { background: var(--bg-sunken); color: var(--text-mute); }
+/* A stat that has never been measured, as opposed to one that is genuinely zero. */
+.stat-card.muted .n { color: var(--text-mute); }
