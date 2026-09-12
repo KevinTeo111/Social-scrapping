@@ -97,6 +97,53 @@ function readStateFile(file) {
  * `cookies` lets a caller drive the browser as a particular registered user;
  * omitting it falls back to the on-disk export, which is what the CLI uses.
  */
+/*
+ * Launching, with a fallback.
+ *
+ * `channel: 'chromium'` asks for the full browser rather than
+ * chromium-headless-shell, which Cloudflare fingerprints readily — that choice
+ * is what took a run from four challenges to none, so it is tried first.
+ *
+ * It depends on that build being present, though, and an image can end up with
+ * only the headless shell: a cached or partial `playwright install` leaves the
+ * directory the channel points at missing, and the launch fails with a bare
+ * "spawn ... ENOENT" naming a path nobody recognises. Scraping with the shell is
+ * worse than scraping with the full browser and far better than not scraping, so
+ * the shell is used rather than failing the run.
+ */
+let launchNote = null;
+
+async function launchBrowser(headless) {
+  const base = { headless, args: LAUNCH_ARGS };
+  try {
+    return await chromium.launch({ ...base, channel: 'chromium' });
+  } catch (err) {
+    if (!/ENOENT|Executable doesn't exist|Failed to launch/i.test(err.message)) throw err;
+
+    try {
+      const browser = await chromium.launch(base);
+      if (launchNote !== 'shell') {
+        launchNote = 'shell';
+        console.warn(
+          [
+            '[browser] The full Chromium build is missing; using the headless shell.',
+            '          Cloudflare challenges that one far more often. Fix the image with:',
+            '            npx playwright install chromium',
+            `          (PLAYWRIGHT_BROWSERS_PATH=${process.env.PLAYWRIGHT_BROWSERS_PATH || "default"})`,
+          ].join(String.fromCharCode(10)),
+        );
+      }
+      return browser;
+    } catch (second) {
+      throw new Error(
+        `No Chromium could be launched. Playwright looked under ` +
+          `${process.env.PLAYWRIGHT_BROWSERS_PATH || 'its default browsers path'} and found nothing usable. ` +
+          `Run "npx playwright install chromium" where the app runs. (${second.message})`,
+      );
+    }
+  }
+}
+
 export async function launchContext({
   headless = config.headless,
   cookies = null,
@@ -105,13 +152,7 @@ export async function launchContext({
 } = {}) {
   // A member's own exit beats the instance-wide default.
   const egress = proxy || config.proxy;
-  const browser = await chromium.launch({
-    headless,
-    args: LAUNCH_ARGS,
-    // Without this Playwright launches `chromium-headless-shell`, which Cloudflare
-    // fingerprints readily. `channel: 'chromium'` uses the full browser binary.
-    channel: 'chromium',
-  });
+  const browser = await launchBrowser(headless);
 
   const context = await browser.newContext({
     userAgent: config.userAgent,

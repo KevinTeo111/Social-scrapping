@@ -26,6 +26,12 @@ RUN npm ci --omit=dev --ignore-scripts
 RUN npx playwright install --with-deps chromium \
  && rm -rf /var/lib/apt/lists/*
 
+# Prove the browser actually launches, here, where a failure stops the build.
+# Otherwise the first sign of a broken image is a scrape dying hours later with
+# "spawn /ms-playwright/... ENOENT", a path nobody recognises, on the board.
+# The scraper asks for the chromium channel, so that is what gets checked.
+RUN node -e "require('playwright').chromium.launch({channel:'chromium',args:['--no-sandbox']}).then(b=>b.close()).then(()=>console.log('chromium ok')).catch(e=>{console.error('chromium failed to launch:',e.message);process.exit(1)})"
+
 COPY . .
 
 # `data/` holds the SQLite corpus, the encryption key and each member's earned
