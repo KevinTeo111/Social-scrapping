@@ -828,6 +828,7 @@ app.get('/api/status', requireAuth, async (req, res) => {
     scrapingMine: scrapingUserId() === req.user.id,
     queued: queueLength(),
     stopping: isCancelling(),
+    paused,
     canStop: Boolean(req.user.is_admin),
     progress: currentProgress(),
     backlog,
@@ -896,13 +897,28 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
  * remainder of the run rather than its results.
  */
 app.post('/api/scrape/stop', requireAuth, requireAdmin, async (req, res) => {
-  if (!isScraping() && !queueLength()) {
-    return res.json({ ok: true, stopped: false, note: 'Nothing is running.' });
-  }
+  const wasRunning = isScraping() || queueLength() > 0;
 
-  const result = await stopScraping();
-  console.log(`[scrape] stopped by ${req.user.email}`);
-  res.json({ ok: true, stopped: true, ...result });
+  // The clock is stopped first, so nothing can slip in behind the stop.
+  paused = true;
+  clearTimeout(timer);
+  nextRunAt = null;
+
+  const result = wasRunning ? await stopScraping() : { wasRunning: false, queued: 0 };
+  console.log(`[scrape] stopped and paused by ${req.user.email}`);
+  res.json({ ok: true, stopped: wasRunning, paused: true, ...result });
+});
+
+/** Lets the clock run again. Only an explicit act lifts a pause. */
+app.post('/api/scrape/resume', requireAuth, requireAdmin, (req, res) => {
+  paused = false;
+  scheduleNext();
+  console.log(`[scrape] resumed by ${req.user.email}`);
+  res.json({
+    ok: true,
+    paused: false,
+    nextRunAt: nextRunAt ? new Date(nextRunAt).toISOString() : null,
+  });
 });
 
 app.post('/api/insights/:slug', requireAuth, async (req, res) => {
@@ -926,12 +942,26 @@ app.post('/api/insights/:slug', requireAuth, async (req, res) => {
 let nextRunAt = null;
 let timer = null;
 
+/*
+ * Whether the automatic refresh is held off.
+ *
+ * Stopping a run only ever ended the run. The timer behind it kept its
+ * appointment, so within a minute the scheduler woke, found nothing running,
+ * picked whichever member had gone longest without a turn and started a fresh
+ * run under their name — which reads on the board as "another member is
+ * scraping" and makes the Stop button look like it did nothing.
+ *
+ * A stop now holds the loop until somebody lifts it. A member asking for a run
+ * by hand still gets one; what stays off is the clock.
+ */
+let paused = false;
+
 /** Re-check this soon when the tick lands on top of a run already in progress. */
 const BUSY_RETRY_MS = 60_000;
 
 function scheduleNext(delay = config.autoScrapeMinutes * 60_000) {
   clearTimeout(timer);
-  if (!config.autoScrapeMinutes) {
+  if (paused || !config.autoScrapeMinutes) {
     nextRunAt = null;
     return;
   }

@@ -238,6 +238,23 @@ async function challengeErrored(page) {
  * the renderer was killed for memory — several lanes each hold a full tab open,
  * and a Turnstile challenge is one of the heavier things one can be showing.
  */
+/**
+ * Opens a tab, and says what it means when that fails.
+ *
+ * A browser short of memory dies at the moment a page is created, so this is
+ * where a container that is too small announces itself -- as
+ * "browserContext.newPage: Target crashed", which names no cause and suggests
+ * no remedy. Every tab in a run comes through here so that it does.
+ */
+export async function newPage(context) {
+  try {
+    return await context.newPage();
+  } catch (err) {
+    if (isTargetCrash(err)) throw new BrowserCrashError('a new tab', err);
+    throw err;
+  }
+}
+
 export function isTargetCrash(err) {
   return /target (crashed|closed)|browser has been closed/i.test(err?.message || '');
 }

@@ -5,6 +5,7 @@ import {
   jitter,
   sleep,
   saveState,
+  newPage,
   CloudflareChallengeError,
   isTargetCrash,
   dump,
@@ -200,7 +201,7 @@ async function runScrape({
   try {
     ({ browser, context } = await launchContext({ cookies, userId, proxy }));
     activeBrowser = browser;
-    const page = await context.newPage();
+    const page = await newPage(context);
 
     /*
      * Walk the result set forward one page at a time.
@@ -379,7 +380,7 @@ async function enrichDetails(context, { budget, onProgress = () => {}, userId = 
 
   await Promise.all(
     Array.from({ length: lanes }, async () => {
-      const page = await context.newPage();
+      const page = await newPage(context);
       try {
         while (queue.length) {
           if (cancelling) break;
@@ -500,7 +501,7 @@ export async function fetchInsightsOn(page, slug, userId = null) {
 export async function fetchInsights(slug, { userId = null, cookies = null, proxy = null } = {}) {
   const { browser, context } = await launchContext({ cookies, userId, proxy });
   try {
-    return await fetchInsightsOn(await context.newPage(), slug, userId);
+    return await fetchInsightsOn(await newPage(context), slug, userId);
   } finally {
     await browser.close().catch(() => {});
   }
@@ -533,7 +534,7 @@ async function enrichInsights(context, { budget, onProgress = () => {}, userId =
 
   await Promise.all(
     Array.from({ length: lanes }, async () => {
-      const page = await context.newPage();
+      const page = await newPage(context);
       try {
         while (queue.length) {
           if (cancelling) break;
@@ -574,7 +575,7 @@ async function enrichInsights(context, { budget, onProgress = () => {}, userId =
 export async function checkLogin({ cookies = null, userId = null, proxy = null } = {}) {
   const { browser, context } = await launchContext({ cookies, userId, proxy });
   try {
-    const page = await context.newPage();
+    const page = await newPage(context);
     // The list is rendered client-side, so wait for a card before counting.
     await gotoWithChallenge(page, `${config.baseUrl}/jobs?language=${config.language}`, {
       waitFor: '.project-item',

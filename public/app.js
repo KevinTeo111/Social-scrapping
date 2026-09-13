@@ -1242,19 +1242,32 @@ async function pollStatus() {
       dot.className = 'status-dot error';
       text.textContent = s.lastError.slice(0, 60);
     } else {
-      dot.className = 'status-dot';
+      dot.className = s.paused ? 'status-dot error' : 'status-dot';
       const loaded = s.lastRun?.finished_at ? new Date(s.lastRun.finished_at).toLocaleTimeString() : '—';
-      text.textContent = `Loaded ${loaded}`;
+      text.textContent = s.paused ? `Paused · loaded ${loaded}` : `Loaded ${loaded}`;
       text.title = describeBacklog(s.backlog);
     }
     $('#totalCount').textContent = `${s.total} total`;
 
-    // Owner-only: one browser and one queue serve the whole instance, so
-    // stopping is not a personal action.
+    /*
+     * Owner-only: one browser and one queue serve the whole instance, so
+     * stopping is not a personal action.
+     *
+     * Three states, because a stop now holds the clock too: something is
+     * running and can be stopped, the clock is held and can be released, or
+     * neither and the button is not there at all.
+     */
     const stop = $('#stopBtn');
-    stop.hidden = !(s.canStop && (s.scraping || s.queued));
+    const busy = s.scraping || s.queued;
+    stop.hidden = !s.canStop || (!busy && !s.paused);
     stop.disabled = Boolean(s.stopping);
-    stop.textContent = s.stopping ? 'Stopping…' : '■ Stop';
+    stop.classList.toggle('btn-go', Boolean(s.paused && !busy));
+    stop.classList.toggle('btn-stop', !(s.paused && !busy));
+    stop.textContent = s.stopping ? 'Stopping…' : s.paused && !busy ? '▶ Resume' : '■ Stop';
+    stop.title =
+      s.paused && !busy
+        ? 'Automatic refreshing is paused. Start it again.'
+        : 'Stop the run and hold off the automatic refresh';
 
     if (pollStatus.wasScraping && !s.scraping) { load(); loadFacets(); }
     pollStatus.wasScraping = s.scraping;
@@ -1384,14 +1397,18 @@ $('#fullCrawlBtn').onclick = async () => {
  */
 $('#stopBtn').onclick = async () => {
   const btn = $('#stopBtn');
+  // Read which action this is before overwriting the label that says so.
+  const resuming = btn.textContent.includes('Resume');
   btn.disabled = true;
-  btn.textContent = 'Stopping…';
+  btn.textContent = resuming ? 'Resuming…' : 'Stopping…';
   try {
-    const r = await api('/api/scrape/stop', { method: 'POST' });
+    const r = await api(resuming ? '/api/scrape/resume' : '/api/scrape/stop', { method: 'POST' });
     toast(
-      !r.stopped
-        ? 'Nothing was running'
-        : `Stopped${r.queued ? ` · ${r.queued} queued run(s) dropped` : ''} — everything collected so far is kept`,
+      resuming
+        ? 'Automatic refreshing is on again'
+        : `${r.stopped ? 'Stopped' : 'Nothing was running'}${
+            r.queued ? ` · ${r.queued} queued run(s) dropped` : ''
+          } — automatic refreshing is paused until you resume`,
     );
     pollStatus();
   } catch (ex) {
