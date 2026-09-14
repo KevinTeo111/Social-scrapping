@@ -639,3 +639,5 @@ tr:hover .j-title .tx { color: var(--accent); }
 .tag.read { background: var(--bg-sunken); color: var(--text-mute); }
 /* A stat that has never been measured, as opposed to one that is genuinely zero. */
 .stat-card.muted .n { color: var(--text-mute); }
+/* A project that is no longer open, shown only when asked for. */
+.pill.closed { background: var(--red-soft); color: var(--red); }

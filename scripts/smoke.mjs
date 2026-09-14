@@ -8,7 +8,7 @@
  *
  * It reads and never writes, so it is safe to run against live data.
  */
-import { all, get, initDatabase, isPostgres, dialect } from '../src/db.js';
+import { all, get, initDatabase, isPostgres, dialect, CLOSED_SQL } from '../src/db.js';
 
 await initDatabase();
 console.log(`engine: ${dialect}\n`);
@@ -133,6 +133,15 @@ await check('late columns: my proposal state', () =>
 );
 await check('late columns: bid action url', () =>
   get('SELECT COUNT(bid_action_url) AS n FROM jobs'),
+);
+
+// The open/closed rule: a correlated subquery and string comparisons that must
+// read the same on both engines, since it decides what the board shows.
+await check('closed rule', () =>
+  get(`SELECT COUNT(*) AS total,
+              SUM(CASE WHEN ${CLOSED_SQL} THEN 1 ELSE 0 END) AS closed,
+              (SELECT COUNT(*) FROM scrape_runs WHERE complete = 1) AS complete_walks
+         FROM jobs j`),
 );
 
 await check('stats: developers', () =>

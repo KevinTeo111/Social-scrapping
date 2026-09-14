@@ -3,7 +3,7 @@ import path from 'node:path';
 import express from 'express';
 import { config } from './config.js';
 import { loadWorkanaCookies, hasSessionCookie, describeSession } from './cookies.js';
-import { all, get, lastRun, upsertUserJob, adoptLegacyData, initDatabase, isPostgres } from './db.js';
+import { all, get, lastRun, upsertUserJob, adoptLegacyData, initDatabase, isPostgres, CLOSED_SQL } from './db.js';
 import {
   scrape,
   isScraping,
@@ -445,6 +445,20 @@ function buildQuery(q, userId) {
    * sent, opened by the client, favourited, answered. Filtering on them is how
    * you find the ones worth chasing rather than re-reading all 157.
    */
+  /*
+   * Awarded, cancelled or simply gone from the list: not somewhere to bid, so
+   * off the board unless asked for. See CLOSED_SQL for how that is decided.
+   */
+  /*
+   * Except when the question is about my own history. "Bid by me" is asked to
+   * review proposals, and most proposals end on a project that has since been
+   * awarded -- hiding those would make 157 bids read as 58. Finding open work and
+   * reviewing past work want opposite defaults, so the history filters bring the
+   * closed ones back on their own.
+   */
+  const reviewingHistory = ['myBid', 'myRead', 'myFavourite', 'myContact'].some((k) => q[k] === '1');
+  if (q.showClosed !== '1' && !reviewingHistory) where.push(`NOT ${CLOSED_SQL}`);
+
   if (q.myBid === '1') where.push('COALESCE(uf.has_own_bid, 0) = 1');
   if (q.myRead === '1') where.push('COALESCE(uf.proposal_read, 0) = 1');
   if (q.myFavourite === '1') where.push('COALESCE(uf.client_favorite, 0) = 1');
@@ -506,7 +520,8 @@ const SELECT_COLUMNS = `
   c.member_since AS client_member_since, c.last_login AS client_last_login,
   c.last_login_at AS client_last_login_at,
   c.profile_url AS client_profile_url,
-  COALESCE(uf.starred, 0) AS starred, COALESCE(uf.hidden, 0) AS hidden, uf.note
+  COALESCE(uf.starred, 0) AS starred, COALESCE(uf.hidden, 0) AS hidden, uf.note,
+  CASE WHEN ${CLOSED_SQL} THEN 1 ELSE 0 END AS is_closed
 `;
 
 app.get('/api/jobs', requireAuth, async (req, res) => {
@@ -599,22 +614,25 @@ app.get('/api/jobs/:slug', requireAuth, async (req, res) => {
 // the aliases these queries want. Always group by the underlying expression.
 app.get('/api/facets', requireAuth, async (_req, res) => {
   const categories = await all(
-      `SELECT COALESCE(category, 'Uncategorised') AS name, category_slug AS slug, COUNT(*) AS n
-         FROM jobs GROUP BY COALESCE(category, 'Uncategorised'), category_slug ORDER BY n DESC`,
+      `SELECT COALESCE(j.category, 'Uncategorised') AS name, j.category_slug AS slug, COUNT(*) AS n
+         FROM jobs j WHERE NOT ${CLOSED_SQL}
+        GROUP BY COALESCE(j.category, 'Uncategorised'), j.category_slug ORDER BY n DESC`,
     );
   const subcategories = await all(
-      `SELECT subcategory AS name, category AS parent, COUNT(*) AS n FROM jobs
-        WHERE subcategory IS NOT NULL GROUP BY subcategory, category ORDER BY n DESC LIMIT 120`,
+      `SELECT j.subcategory AS name, j.category AS parent, COUNT(*) AS n FROM jobs j
+        WHERE j.subcategory IS NOT NULL AND NOT ${CLOSED_SQL}
+        GROUP BY j.subcategory, j.category ORDER BY n DESC LIMIT 120`,
     );
   const countries = await all(
       `SELECT c.country AS name, c.country_code AS code, COUNT(*) AS n
          FROM jobs j JOIN clients c ON c.id = j.client_id
-        WHERE c.country IS NOT NULL GROUP BY c.country, c.country_code ORDER BY n DESC`,
+        WHERE c.country IS NOT NULL AND NOT ${CLOSED_SQL}
+        GROUP BY c.country, c.country_code ORDER BY n DESC`,
     );
 
   // Skills live inside a JSON blob, so tally them in JS rather than SQL.
   const tally = new Map();
-  for (const row of await all('SELECT skills FROM jobs WHERE skills IS NOT NULL')) {
+  for (const row of await all(`SELECT j.skills FROM jobs j WHERE j.skills IS NOT NULL AND NOT ${CLOSED_SQL}`)) {
     let list = [];
     try {
       list = JSON.parse(row.skills);

@@ -13,6 +13,7 @@ import {
 import { pageExtractList, pageExtractDetail, pageExtractInsights, normaliseListJob, normaliseDetail } from './parse.js';
 import {
   all,
+  get,
   run as dbRun,
   upsertJob,
   upsertClient,
@@ -21,6 +22,7 @@ import {
   saveInsights,
   startRun,
   finishRun,
+  pruneClosedJobs,
 } from '../db.js';
 import { findUser } from '../auth.js';
 
@@ -296,6 +298,7 @@ async function runScrape({
       for (const card of usable) {
         seenSlugs.add(card.slug);
         const job = normaliseListJob(card, now);
+        job.listedAt = new Date(now).toISOString();
         if (job.client) await upsertClient(job.client);
         const result = await upsertJob(job);
 
@@ -319,6 +322,42 @@ async function runScrape({
       onProgress({ phase: 'list-done', page: p, count: usable.length, fresh: fresh.length, ...stats });
 
       if (p < pages) await jitter();
+    }
+
+    /*
+     * Was this a complete walk of the default list? Only then can a missing job
+     * be taken as gone. It has to have reached the natural end (an empty or
+     * clamped page, not the page cap), without a challenge, crash or stop, over
+     * the board's own scope -- a search or another category sees a different list.
+     *
+     * One more guard, against the ambiguity the walk already fights: a throttled
+     * page reads as an empty one, and would end the walk early looking complete.
+     * A walk that saw far fewer jobs than the last complete one is not trusted.
+     */
+    const defaultScope = !query && category === config.category && language === config.language;
+    if (defaultScope && stats.endedAt && !stats.error && !cancelling) {
+      const previous = await get(
+        'SELECT seen FROM scrape_runs WHERE complete = 1 ORDER BY started_at DESC LIMIT 1',
+      );
+      const floor = previous?.seen ? Math.floor(previous.seen * 0.6) : 0;
+      if (stats.seen >= floor) {
+        stats.complete = true;
+        /*
+         * Recorded now rather than in the final bookkeeping, because the prune
+         * reads which walks were complete and this one has to count. Deleting
+         * before enrichment also spares the detail and insight passes from
+         * spending page loads on jobs that are about to go.
+         */
+        await dbRun('UPDATE scrape_runs SET complete = 1 WHERE id = ?', [runId]);
+        const pruned = await pruneClosedJobs();
+        stats.pruned = pruned.deleted;
+        onProgress({ phase: 'pruned', deleted: pruned.deleted });
+      } else {
+        console.warn(
+          `[scrape] walk ended at ${stats.seen} jobs, under 60% of the last complete walk ` +
+            `(${previous.seen}); not treating it as complete, so nothing is pruned.`,
+        );
+      }
     }
 
     if (withDetails && detailBudget > 0 && !cancelling) {

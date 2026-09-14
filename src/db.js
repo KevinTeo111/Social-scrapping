@@ -214,17 +214,19 @@ export async function upsertJob(job) {
 
   await run(
     `INSERT INTO jobs (
-       ${seqColumn}slug, url, title, published_text, published_at, published_approx_at, first_seen_at, last_seen_at,
+       ${seqColumn}slug, url, title, published_text, published_at, published_approx_at, first_seen_at, last_seen_at, last_listed_at,
        detail_fetched_at, budget_text, currency, budget_min, budget_max, is_hourly, budget_is_max,
        summary, description, skills, category, category_slug, subcategory, subcategory_slug,
        project_size, project_duration, language, bids, interested, avg_bid_rate, status_label,
        is_featured, is_max_highlighted, has_own_bid, bid_action_label, bid_action_url, was_contacted,
        client_id, raw, last_reply_text, last_reply_at
-     ) VALUES (${seqValue}?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ) VALUES (${seqValue}?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(slug) DO UPDATE SET
        url                = excluded.url,
        title              = excluded.title,
        last_seen_at       = excluded.last_seen_at,
+       -- Only a list upsert carries this; a detail upsert must not refresh it.
+       last_listed_at     = COALESCE(excluded.last_listed_at, jobs.last_listed_at),
        is_hourly          = excluded.is_hourly,
        budget_is_max      = excluded.budget_is_max,
        -- Keep the first estimate, but backfill it if we never managed to derive one.
@@ -251,6 +253,7 @@ export async function upsertJob(job) {
       job.publishedApproxAt ?? null,
       now,
       now,
+      job.listedAt ?? null,
       job.detailFetchedAt ?? null,
       job.budgetText ?? null,
       job.currency ?? null,
@@ -493,7 +496,7 @@ export async function startRun(userId = null) {
 export async function finishRun(id, stats) {
   await run(
     `UPDATE scrape_runs SET finished_at = ?, ok = ?, pages = ?, seen = ?, inserted = ?, updated = ?,
-                            details = ?, insights = ?, error = ? WHERE id = ?`,
+                            details = ?, insights = ?, error = ?, complete = ? WHERE id = ?`,
     [
       new Date().toISOString(),
       stats.ok ? 1 : 0,
@@ -504,9 +507,71 @@ export async function finishRun(id, stats) {
       stats.details ?? 0,
       stats.insights ?? 0,
       stats.error ?? null,
+      stats.complete ? 1 : 0,
       id,
     ],
   );
+}
+
+/*
+ * Whether a job is still open, decided in one place.
+ *
+ * Two independent signals. The detail page states it outright once a project
+ * is awarded -- "In progress", "Waiting for escrow" -- and any status other than
+ * evaluating bids means the window has shut. The list states it by omission: a
+ * job missing from the most recent *complete* walk of the list is no longer
+ * listed, whether it was awarded, cancelled or withdrawn. Neither signal alone
+ * catches everything: a status is only read once, and goes stale; absence needs
+ * a complete walk to mean anything.
+ *
+ * Expects the jobs table aliased as `j`. With no complete walk recorded yet the
+ * absence rule stays silent, so a fresh database hides nothing it cannot prove.
+ */
+export const LAST_COMPLETE_CRAWL = '(SELECT MAX(started_at) FROM scrape_runs WHERE complete = 1)';
+export const CLOSED_SQL = `(
+  (j.status_label IS NOT NULL AND j.status_label NOT LIKE 'Evaluat%'
+     AND j.status_label NOT LIKE 'Avalia%' AND j.status_label NOT LIKE 'Evalua%')
+  OR (${LAST_COMPLETE_CRAWL} IS NOT NULL
+      AND (j.last_listed_at IS NULL OR j.last_listed_at < ${LAST_COMPLETE_CRAWL}))
+)`;
+
+/**
+ * Deletes jobs that have been gone for long enough to be sure.
+ *
+ * Absence from a single walk is not proof: a posting can slide from page 40 to
+ * 41 while the walk is between them, or a throttled page can end a walk early
+ * without saying so. So a job is only deleted once it has been missing from the
+ * last two complete walks. Anything a member has touched -- a bid, a contact, a
+ * star, a note -- is kept regardless: it stops appearing on the board, but the
+ * history behind the proposal statistics is not quietly thrown away.
+ */
+export async function pruneClosedJobs() {
+  const walks = await all(
+    'SELECT started_at FROM scrape_runs WHERE complete = 1 ORDER BY started_at DESC LIMIT 2',
+  );
+  if (walks.length < 2) return { deleted: 0, reason: 'needs two complete walks' };
+  const olderWalk = walks[1].started_at;
+
+  const doomed = (
+    await all(
+      `SELECT j.slug FROM jobs j
+        WHERE (j.last_listed_at IS NULL OR j.last_listed_at < ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM user_jobs uj
+             WHERE uj.job_slug = j.slug
+               AND (COALESCE(uj.has_own_bid, 0) = 1 OR COALESCE(uj.was_contacted, 0) = 1
+                    OR COALESCE(uj.starred, 0) = 1 OR uj.note IS NOT NULL))`,
+      [olderWalk],
+    )
+  ).map((r) => r.slug);
+
+  for (const slug of doomed) {
+    await run('DELETE FROM job_insights WHERE job_slug = ?', [slug]);
+    await run('DELETE FROM user_jobs WHERE job_slug = ?', [slug]);
+    if (!isPostgres) await run('DELETE FROM jobs_fts WHERE slug = ?', [slug]);
+    await run('DELETE FROM jobs WHERE slug = ?', [slug]);
+  }
+  return { deleted: doomed.length };
 }
 
 export async function lastRun() {

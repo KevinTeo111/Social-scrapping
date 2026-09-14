@@ -74,6 +74,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   published_approx_at ${T.text},
   first_seen_at       ${T.text} NOT NULL,
   last_seen_at        ${T.text} NOT NULL,
+  -- Last time the job appeared on the *list*. Kept apart from last_seen_at,
+  -- which the detail page also refreshes: a detail page still loads after a
+  -- project is awarded or cancelled, so it cannot say whether the job is listed.
+  last_listed_at      ${T.text},
   detail_fetched_at   ${T.text},
 
   budget_text         ${T.text},
@@ -235,6 +239,9 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
   details     ${T.int} DEFAULT 0,
   insights    ${T.int} DEFAULT 0,
   user_id     ${T.int},
+  -- Whether this run walked the whole default list to its natural end. Only
+  -- such a run can say a job is gone; a five-page refresh cannot.
+  complete    ${T.int} DEFAULT 0,
   error       ${T.text}
 );
 
@@ -280,6 +287,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(
  */
 export const LATE_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_jobs_seq ON jobs(seq);
+CREATE INDEX IF NOT EXISTS idx_jobs_listed ON jobs(last_listed_at);
 `;
 
 /**
@@ -294,6 +302,8 @@ export const LATE_COLUMNS = [
   ['jobs', 'last_reply_at', T.text],
   ['jobs', 'seq', T.seq],
   ['jobs', 'bid_action_url', T.text],
+  ['jobs', 'last_listed_at', T.text],
+  ['scrape_runs', 'complete', `${T.int} DEFAULT 0`],
   ['scrape_runs', 'insights', `${T.int} DEFAULT 0`],
   ['scrape_runs', 'user_id', T.int],
   ['clients', 'last_login_at', T.text],

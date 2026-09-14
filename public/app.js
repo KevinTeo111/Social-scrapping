@@ -25,6 +25,7 @@ const state = {
   hasHired: false,
   repliedWithin: '',
   clientSeen: '',
+  showClosed: false,
   myBid: false,
   myRead: false,
   myFavourite: false,
@@ -202,7 +203,7 @@ function queryString() {
   add('repliedWithin', state.repliedWithin);
   add('clientSeen', state.clientSeen);
   for (const k of ['verified', 'noBids', 'notBid', 'starred', 'hasContacts', 'noContacts', 'hasReply', 'hasHired',
-    'myContact', 'noMyContact', 'myBid', 'myRead', 'myFavourite'])
+    'myContact', 'noMyContact', 'myBid', 'myRead', 'myFavourite', 'showClosed'])
     if (state[k]) p.set(k, '1');
   if (state.country.size) p.set('country', [...state.country].join(','));
   if (state.category.size) p.set('category', [...state.category].join(','));
@@ -570,6 +571,7 @@ function renderChips() {
   if (state.since)
     add(`Within ${$('#since').selectedOptions[0].textContent}`, () => { state.since = ''; $('#since').value = ''; reload(); });
   for (const [key, label] of [
+    ['showClosed', 'Including awarded / closed'],
     ['myBid', '✓ Bid by me'],
     ['myRead', '👁 Proposal read'],
     ['myFavourite', '★ Client favourited me'],
@@ -828,6 +830,7 @@ function drawerHtml({ job, reviews, insights, otherJobs }) {
       ${job.category ? `<span class="pill">${esc(job.category)}</span>` : ''}
       ${job.subcategory ? `<span class="pill">${esc(job.subcategory)}</span>` : ''}
       ${job.is_featured ? '<span class="pill gold">🏆 Workana\'s selection</span>' : ''}
+      ${job.is_closed ? '<span class="pill closed">⛔ Awarded or closed — no longer listed</span>' : ''}
       ${job.has_own_bid ? '<span class="pill mine">✓ You bid on this</span>' : ''}
       ${job.was_contacted ? '<span class="pill mine">✉ The client has contacted you</span>' : ''}
       ${job.proposal_read ? '<span class="pill">👁 Proposal read</span>' : ''}
@@ -1302,7 +1305,7 @@ $('#sort').onchange = (e) => { state.sort = e.target.value; reload(); };
 $('#since').onchange = (e) => { state.since = e.target.value; reload(); };
 $('#repliedWithin').onchange = (e) => { state.repliedWithin = e.target.value; reload(); };
 $('#clientSeen').onchange = (e) => { state.clientSeen = e.target.value; reload(); };
-for (const id of ['myContact', 'noMyContact', 'myBid', 'myRead', 'myFavourite']) {
+for (const id of ['myContact', 'noMyContact', 'myBid', 'myRead', 'myFavourite', 'showClosed']) {
   $(`#${id}`).onchange = (e) => { state[id] = e.target.checked; reload(); };
 }
 
@@ -1322,7 +1325,7 @@ for (const id of ['starred', 'verified', 'noBids', 'notBid', 'hasContacts', 'noC
 $('#clearFilters').onclick = () => {
   Object.assign(state, {
     search: '', minBudget: '', maxBudget: '', maxBids: '', since: '', type: '',
-    repliedWithin: '', clientSeen: '', myBid: false, myRead: false, myFavourite: false,
+    repliedWithin: '', clientSeen: '', showClosed: false, myBid: false, myRead: false, myFavourite: false,
     myContact: false, noMyContact: false, verified: false, noBids: false, notBid: false, starred: false,
     hasContacts: false, noContacts: false, hasReply: false, hasHired: false, offset: 0,
   });
@@ -1331,7 +1334,7 @@ $('#clearFilters').onclick = () => {
   for (const id of ['minBudget', 'maxBudget', 'maxBids', 'since', 'repliedWithin', 'clientSeen'])
     $(`#${id}`).value = '';
   for (const id of ['starred', 'verified', 'noBids', 'notBid', 'hasContacts', 'noContacts', 'hasReply', 'hasHired',
-    'myContact', 'noMyContact', 'myBid', 'myRead', 'myFavourite'])
+    'myContact', 'noMyContact', 'myBid', 'myRead', 'myFavourite', 'showClosed'])
     $(`#${id}`).checked = false;
   document.querySelectorAll('.seg-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
   ['category', 'country', 'skill'].forEach((n) => { updateFacetCount(n); repaint(n); });
