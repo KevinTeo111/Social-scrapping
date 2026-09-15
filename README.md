@@ -16,6 +16,7 @@ sign up and connect their own Workana sessions.
 
 ---
 
+
 ## Why it drives a browser
 
 Workana sits behind Cloudflare. A plain HTTP client — `curl`, `fetch`, `Invoke-WebRequest` —
