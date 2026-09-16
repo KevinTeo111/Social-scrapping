@@ -278,11 +278,13 @@ function rowFor(job) {
 
   /* Posted */
   const tdPosted = el('td');
+  // Relative, like LAST REPLY beside it — "15m ago" answers "is this still warm?"
+  // faster than a date does. The exact stamp stays one hover away.
   const pt = dated
-    ? el('span', `j-time${ageMin < 60 ? ' fresh' : ''}`, shortStamp(posted))
+    ? el('span', `j-time${ageMin < 60 ? ' fresh' : ''}`, timeAgo(posted))
     : el('span', 'j-time j-time-guess', job.published_text || '—');
   pt.title = dated
-    ? `Posted ${fullStamp(posted)} (${timeAgo(posted)})`
+    ? `Posted ${fullStamp(posted)}`
     : `Workana gave no date we could read${job.published_text ? ` — it said “${job.published_text}”` : ''}. ` +
       `Ordered by when we collected it, ${fullStamp(job.first_seen_at)}.`;
   tdPosted.appendChild(pt);

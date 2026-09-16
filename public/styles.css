@@ -246,7 +246,7 @@ select.f-control {
    itself scroll sideways on narrow screens instead. */
 .table-wrap { min-width: 0; }
 
-.jobs { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 1230px; }
+.jobs { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 1208px; }
 .jobs thead th {
   text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase;
   letter-spacing: .04em; color: var(--text-mute);
@@ -255,7 +255,7 @@ select.f-control {
 }
 
 .c-no        { width: 78px; }
-.c-posted    { width: 112px; }
+.c-posted    { width: 90px; }
 .c-reply     { width: 90px; }
 .c-title     { width: auto; }
 .c-budget    { width: 152px; }
