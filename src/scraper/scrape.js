@@ -27,36 +27,46 @@ import {
 import { findUser } from '../auth.js';
 
 /**
- * Only one scrape at a time, across all accounts. Several members each driving
- * their own Chromium at Workana simultaneously is both heavy locally and a good
- * way to get the whole instance rate-limited, so runs queue instead.
+ * One scrape at a time for the whole instance, and a second request is refused
+ * outright rather than queued.
  *
- * At most one waiting run per member, though. Every run walks the same list
- * pages, so a queue of them is not more work done, it is the same work repeated
- * while everyone waits longer — which is what "3 queued" behind another member's
- * run actually meant. A second request from a member who is already running or
- * already waiting joins the one they have instead of adding another.
+ * Several members each driving their own Chromium at Workana simultaneously is
+ * both heavy locally and a good way to get the whole instance rate-limited, so
+ * only one run may ever be in flight.
+ *
+ * This module used to queue the extras. Refusing them is better. Every run walks
+ * the same list pages, so a queue is not more work done — it is the same work
+ * repeated while everybody waits longer, and a member who clicked once could
+ * find their run finally starting ten minutes later against a board somebody
+ * else had already refreshed. A refusal says the true thing immediately: the
+ * board is being refreshed right now, the results are coming, press nothing.
  */
 let running = null;
 let runningUserId = null;
-let runningPages = 0;
-// Named `pending` rather than `queue` because enrichDetails() has its own local
-// work queue; two things called `queue` in one module is a trap.
-const pending = [];
+let runningSince = null;
 
 export const isScraping = () => Boolean(running);
 export const scrapingUserId = () => runningUserId;
-export const queueLength = () => pending.length;
-export const isQueued = (userId) => pending.some((p) => p.userId === userId);
+export const scrapingSince = () => runningSince;
 
-/** Where a member stands right now: running their own, waiting, or neither. */
+/** Where a member stands right now: running their own, or not running at all. */
 export function runStateFor(userId) {
-  if (running && runningUserId === userId) return 'running';
-  if (isQueued(userId)) return 'queued';
-  return null;
+  return running && runningUserId === userId ? 'running' : null;
 }
 
-const pagesOf = (options) => Number(options?.pages) || config.refreshPages;
+/**
+ * Thrown by scrape() when a run is already in flight. It carries whose run it is
+ * and when it started so the caller can say that, rather than a bare "busy".
+ */
+export class ScrapeBusyError extends Error {
+  constructor(userId, since) {
+    super('A scrape is already running');
+    this.name = 'ScrapeBusyError';
+    this.busy = true;
+    this.userId = userId;
+    this.since = since;
+  }
+}
 
 /*
  * Stopping a run.
@@ -85,56 +95,32 @@ export const isCancelling = () => cancelling && Boolean(running);
 let progress = null;
 export const currentProgress = () => progress;
 
+/**
+ * Claims the single run slot, or throws ScrapeBusyError if someone holds it.
+ *
+ * The check and the claim are both synchronous and in that order, which is what
+ * makes this — and not any check a caller does first — the real guard: two
+ * requests arriving in the same tick cannot both get past it. A caller may still
+ * call isScraping() beforehand for a friendlier message, but that check alone
+ * would race across the awaits between it and here.
+ */
 export function scrape(options = {}) {
-  const userId = options.userId ?? null;
-  const pages = pagesOf(options);
+  if (running) throw new ScrapeBusyError(runningUserId, runningSince);
 
-  if (!running) {
-    runningUserId = userId;
-    runningPages = pages;
-    running = runScrape(options).finally(next);
-    return running;
-  }
-
-  const waiting = pending.find((p) => p.userId === userId);
-  if (waiting) {
-    /*
-     * This member is already in line. A deeper request replaces the shallower
-     * one it would have superseded — otherwise clicking Refresh and then Full
-     * crawl would silently discard the full crawl.
-     */
-    if (pages > pagesOf(waiting.options)) waiting.options = options;
-    return waiting.promise;
-  }
-
-  // Their own run is in flight: only queue behind it for something deeper.
-  if (runningUserId === userId && pages <= runningPages) return running;
-
-  let resolve;
-  let reject;
-  const promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  pending.push({ userId, options, promise, resolve, reject });
-  return promise;
+  runningUserId = options.userId ?? null;
+  runningSince = Date.now();
+  running = runScrape(options).finally(releaseSlot);
+  return running;
 }
 
 /**
- * Stops the run in flight and empties the queue behind it.
+ * Stops the run in flight.
  *
- * Queued runs are resolved rather than rejected: their caller asked for a
- * scrape and is getting an answer, just one that says nothing was collected.
- * Rejecting would surface as a failure in the status badge, which a deliberate
- * stop is not.
+ * Nothing is queued behind it to clear: a request that arrived while this run
+ * held the slot was refused at the door, not parked.
  */
 export async function stopScraping() {
-  const stopped = { wasRunning: Boolean(running), queued: pending.length };
-
-  while (pending.length) {
-    const item = pending.shift();
-    item.resolve({ ok: false, cancelled: true, seen: 0, error: 'Cancelled before it started' });
-  }
+  const stopped = { wasRunning: Boolean(running) };
 
   if (running) {
     cancelling = true;
@@ -148,18 +134,12 @@ export async function stopScraping() {
   return stopped;
 }
 
-function next() {
+/** Frees the slot however the run ended, so a failure cannot wedge the instance. */
+function releaseSlot() {
   running = null;
   runningUserId = null;
-  runningPages = 0;
+  runningSince = null;
   cancelling = false;
-  const item = pending.shift();
-  if (!item) return;
-  runningUserId = item.userId;
-  runningPages = pagesOf(item.options);
-  running = runScrape(item.options)
-    .then(item.resolve, item.reject)
-    .finally(next);
 }
 
 function listUrl({ page = 1, language, category, query } = {}) {

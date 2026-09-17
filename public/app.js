@@ -1228,6 +1228,16 @@ function describeBacklog(b) {
   );
 }
 
+/*
+ * True from the moment a scrape is asked for until the server has answered.
+ * Only one run may be in flight instance-wide and a second request is refused,
+ * so both buttons stay locked for that window rather than inviting a click that
+ * can only come back as an error.
+ */
+let scrapeRequested = false;
+const REFRESH_TIP = 'Sweep the newest pages for new postings';
+const CRAWL_TIP = 'Walk the whole category to the end — slow, but fills an empty instance';
+
 async function pollStatus() {
   try {
     const res = await fetch('/api/status');
@@ -1239,9 +1249,7 @@ async function pollStatus() {
     if (s.scraping) {
       dot.className = 'status-dot busy';
       const who = s.scrapingMine ? 'Scraping' : 'Another member is scraping';
-      const parts = [who + describeProgress(s.progress)];
-      if (s.queued) parts.push(`${s.queued} queued`);
-      text.textContent = parts.join(' · ');
+      text.textContent = who + describeProgress(s.progress);
       text.title = describeBacklog(s.backlog);
     } else if (s.lastError) {
       dot.className = 'status-dot error';
@@ -1255,15 +1263,38 @@ async function pollStatus() {
     $('#totalCount').textContent = `${s.total} total`;
 
     /*
-     * Owner-only: one browser and one queue serve the whole instance, so
-     * stopping is not a personal action.
+     * One run at a time for the whole instance, and a second request is refused
+     * rather than queued — so the buttons that would send one go grey while a
+     * run is in flight, whoever started it. The server refuses regardless; this
+     * is so nobody has to be refused to find out.
+     */
+    const since = s.scrapingSince ? `, started ${timeAgo(s.scrapingSince)}` : '';
+    const whyBusy = s.scraping
+      ? s.scrapingMine
+        ? `Your scrape is still running${since}. Wait for it to finish.`
+        : `Another member is scraping right now${since}. The board is being refreshed for everyone.`
+      : null;
+    // `scrapeRequested` covers the gap between the click and the server
+    // claiming the slot: without it a poll landing in those few milliseconds
+    // would see scraping:false and hand the button straight back.
+    const lock = Boolean(s.scraping) || scrapeRequested;
+    for (const [id, idle] of [['#refreshBtn', REFRESH_TIP], ['#fullCrawlBtn', CRAWL_TIP]]) {
+      const btn = $(id);
+      if (!btn) continue;
+      btn.disabled = lock;
+      btn.title = whyBusy || idle;
+    }
+
+    /*
+     * Owner-only: one browser serves the whole instance, so stopping is not a
+     * personal action.
      *
      * Three states, because a stop now holds the clock too: something is
      * running and can be stopped, the clock is held and can be released, or
      * neither and the button is not there at all.
      */
     const stop = $('#stopBtn');
-    const busy = s.scraping || s.queued;
+    const busy = Boolean(s.scraping);
     stop.hidden = !s.canStop || (!busy && !s.paused);
     stop.disabled = Boolean(s.stopping);
     stop.classList.toggle('btn-go', Boolean(s.paused && !busy));
@@ -1344,30 +1375,32 @@ $('#clearFilters').onclick = () => {
 };
 
 /**
- * Says what the click actually did. A second request from a member who is
- * already running or waiting joins the one they have rather than stacking
- * another, so "started" would be a lie in three of the four cases.
+ * Asks for a run, and leaves the buttons locked if one started.
+ *
+ * The lock is a courtesy, not the rule — the server refuses a second run
+ * whatever the page does, including from a stale tab or a hand-rolled request.
+ * All this does is spare anyone the round trip to be told no.
  */
-function describeScrapeRequest(r, what) {
-  if (r.state === 'running' && !r.started) return `${what} is already running`;
-  if (r.state === 'queued' && !r.started) return `${what} is already queued`;
-  if (r.queued) return `${what} queued behind ${r.queued} other run(s)`;
-  return `${what} started`;
-}
-
-$('#refreshBtn').onclick = async () => {
+async function requestScrape(body, what) {
+  scrapeRequested = true;
   $('#refreshBtn').disabled = true;
+  $('#fullCrawlBtn').disabled = true;
   try {
-    const r = await api('/api/scrape', { method: 'POST', body: JSON.stringify({}) });
-    toast(describeScrapeRequest(r, 'Scrape'));
+    await api('/api/scrape', { method: 'POST', body: JSON.stringify(body) });
+    toast(`${what} started`);
   } catch (ex) {
     toast(ex.message);
     // Almost always "add your Workana session first" — take them there.
     if (/session/i.test(ex.message)) openAccount();
   } finally {
-    setTimeout(() => ($('#refreshBtn').disabled = false), 4000);
+    // Nothing of ours is in flight any more; from here the buttons follow
+    // whatever the server says is running, which pollStatus applies.
+    scrapeRequested = false;
+    pollStatus();
   }
-};
+}
+
+$('#refreshBtn').onclick = () => requestScrape({}, 'Scrape');
 
 /**
  * A fresh instance starts empty and the periodic refresh only sweeps the first
@@ -1382,18 +1415,7 @@ $('#fullCrawlBtn').onclick = async () => {
       'rate-limited. You can keep using the board while it runs.',
   );
   if (!proceed) return;
-
-  const btn = $('#fullCrawlBtn');
-  btn.disabled = true;
-  try {
-    const r = await api('/api/scrape', { method: 'POST', body: JSON.stringify({ pages: 250 }) });
-    toast(describeScrapeRequest(r, 'Full crawl'));
-  } catch (ex) {
-    toast(ex.message);
-    if (/session/i.test(ex.message)) openAccount();
-  } finally {
-    setTimeout(() => (btn.disabled = false), 8000);
-  }
+  await requestScrape({ pages: 250 }, 'Full crawl');
 };
 
 /**
@@ -1411,9 +1433,8 @@ $('#stopBtn').onclick = async () => {
     toast(
       resuming
         ? 'Automatic refreshing is on again'
-        : `${r.stopped ? 'Stopped' : 'Nothing was running'}${
-            r.queued ? ` · ${r.queued} queued run(s) dropped` : ''
-          } — automatic refreshing is paused until you resume`,
+        : `${r.stopped ? 'Stopped' : 'Nothing was running'} — automatic ` +
+          'refreshing is paused until you resume',
     );
     pollStatus();
   } catch (ex) {

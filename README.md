@@ -102,9 +102,13 @@ That split is deliberate: a posting is the same posting whoever fetched it, so r
 per account would multiply the load on Workana for nothing. Anything that is only true of one
 person lives in `user_jobs`, keyed by user, and every query joins it on the *viewer's* id.
 
-Scrapes queue rather than run in parallel — several members each driving a Chromium at
-Workana at once is heavy locally and a good way to get the whole instance rate-limited. The
-background refresh rotates between members so no single account carries it.
+Only one scrape runs at a time for the whole instance, and a request that arrives while one is
+in flight is **refused** (HTTP 409), not queued — several members each driving a Chromium at
+Workana at once is heavy locally and a good way to get the whole instance rate-limited. Queuing
+them was worse than refusing: every run walks the same list pages, so a queue is the same work
+repeated while everyone waits longer. The board greys out Refresh and Full crawl while a run is
+going, and the background refresh re-checks a minute later instead of competing for the slot.
+That refresh rotates between members so no single account carries it.
 
 ### Cookies
 

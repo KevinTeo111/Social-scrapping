@@ -8,8 +8,8 @@ import {
   scrape,
   isScraping,
   scrapingUserId,
-  queueLength,
-  runStateFor,
+  scrapingSince,
+  ScrapeBusyError,
   currentProgress,
   stopScraping,
   isCancelling,
@@ -844,7 +844,9 @@ app.get('/api/status', requireAuth, async (req, res) => {
   res.json({
     scraping: isScraping(),
     scrapingMine: scrapingUserId() === req.user.id,
-    queued: queueLength(),
+    // When it started, but never whose run it is. The board is shared; who is
+    // driving it is not something one member needs to know about another.
+    scrapingSince: scrapingSince() ? new Date(scrapingSince()).toISOString() : null,
     stopping: isCancelling(),
     paused,
     canStop: Boolean(req.user.is_admin),
@@ -866,33 +868,45 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
   }
 
   const { pages, category, query, detailBudget } = req.body || {};
+  const proxy = await getWorkanaProxy(req.user.id);
 
   /*
-   * Answer before starting, and say which of the three things happened: this
-   * request started a run, joined the one this member already had, or lined up
-   * behind somebody else's. Previously it always claimed "started", so a member
-   * clicking Refresh during another member's run had no way to tell that their
-   * click had done nothing new.
+   * Claim the slot first, and answer 409 if somebody already holds it.
+   *
+   * scrape() decides, not a check here. Everything above this line is awaited,
+   * so a run could start during any of it; only the synchronous claim inside
+   * scrape() can tell two simultaneous clicks apart. Which is also why this is
+   * not wrapped around the await below — that would catch failures from the run
+   * itself and report them as "busy".
    */
-  const already = runStateFor(req.user.id);
-  const deeper = (Number(pages) || config.refreshPages) > config.refreshPages;
-  res.json({
-    started: !already || deeper,
-    state: already,
-    scrapingMine: scrapingUserId() === req.user.id,
-    queued: queueLength(),
-  });
-
+  let run;
   try {
-    await scrape({
+    run = scrape({
       pages: Number(pages) || config.refreshPages,
       category: category ?? config.category,
       query: query || '',
       detailBudget: Number(detailBudget) ?? config.detailBudget,
       userId: req.user.id,
       cookies,
-      proxy: await getWorkanaProxy(req.user.id),
+      proxy,
     });
+  } catch (err) {
+    if (!(err instanceof ScrapeBusyError)) throw err;
+    const mine = err.userId === req.user.id;
+    return res.status(409).json({
+      busy: true,
+      scrapingMine: mine,
+      since: err.since ? new Date(err.since).toISOString() : null,
+      error: mine
+        ? 'Your scrape is still running. Wait for it to finish before starting another.'
+        : 'Another member is scraping right now. The board is being refreshed — wait for it to finish.',
+    });
+  }
+
+  res.json({ started: true, scrapingMine: true });
+
+  try {
+    await run;
     lastError = null;
     await recordCookieCheck(req.user.id, { valid: true });
   } catch (err) {
@@ -903,26 +917,25 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
 });
 
 /**
- * Stops the scrape in flight and clears anything queued behind it.
+ * Stops the scrape in flight.
  *
- * Owner-only. There is one browser and one queue for the whole instance, so a
- * stop is never just personal -- it ends the run whichever member's session is
- * driving it, and drops what everyone else was waiting on. That is a decision
- * for whoever runs the instance rather than for any member who happens to be
- * impatient.
+ * Owner-only. There is one browser for the whole instance, so a stop is never
+ * just personal -- it ends the run whichever member's session is driving it.
+ * That is a decision for whoever runs the instance rather than for any member
+ * who happens to be impatient.
  *
  * Nothing is undone: jobs are written as they are read, so a stop costs the
  * remainder of the run rather than its results.
  */
 app.post('/api/scrape/stop', requireAuth, requireAdmin, async (req, res) => {
-  const wasRunning = isScraping() || queueLength() > 0;
+  const wasRunning = isScraping();
 
   // The clock is stopped first, so nothing can slip in behind the stop.
   paused = true;
   clearTimeout(timer);
   nextRunAt = null;
 
-  const result = wasRunning ? await stopScraping() : { wasRunning: false, queued: 0 };
+  const result = wasRunning ? await stopScraping() : { wasRunning: false };
   console.log(`[scrape] stopped and paused by ${req.user.email}`);
   res.json({ ok: true, stopped: wasRunning, paused: true, ...result });
 });
@@ -986,13 +999,11 @@ function scheduleNext(delay = config.autoScrapeMinutes * 60_000) {
   nextRunAt = Date.now() + delay;
   timer = setTimeout(async () => {
     /*
-     * Never queue a second run behind the one in flight: the queue only grows,
-     * and each run in it would start by re-walking pages the previous one just
-     * fetched. Re-checking in a minute keeps runs effectively back to back
-     * without stacking — waiting a whole interval would leave the scraper idle
-     * for no reason.
+     * The clock never takes the slot from a member. Re-checking in a minute
+     * keeps automatic runs effectively back to back without ever competing —
+     * waiting a whole interval would leave the scraper idle for no reason.
      */
-    if (isScraping() || queueLength()) {
+    if (isScraping()) {
       scheduleNext(BUSY_RETRY_MS);
       return;
     }
@@ -1018,10 +1029,19 @@ function scheduleNext(delay = config.autoScrapeMinutes * 60_000) {
         });
         lastError = null;
       }
+      scheduleNext();
     } catch (err) {
+      /*
+       * Somebody clicked Refresh during the awaits above and took the slot.
+       * That is not a failure and must not be reported as one — their run is
+       * doing the same work this tick wanted done, so come back after it.
+       */
+      if (err instanceof ScrapeBusyError) {
+        scheduleNext(BUSY_RETRY_MS);
+        return;
+      }
       lastError = err.message;
       console.error('[auto-scrape]', err.message);
-    } finally {
       scheduleNext();
     }
   }, delay);
