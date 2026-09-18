@@ -7,6 +7,7 @@ import { all, get, lastRun, upsertUserJob, adoptLegacyData, initDatabase, isPost
 import {
   scrape,
   isScraping,
+  isStalled,
   scrapingUserId,
   scrapingSince,
   ScrapeBusyError,
@@ -847,6 +848,9 @@ app.get('/api/status', requireAuth, async (req, res) => {
     // When it started, but never whose run it is. The board is shared; who is
     // driving it is not something one member needs to know about another.
     scrapingSince: scrapingSince() ? new Date(scrapingSince()).toISOString() : null,
+    // A run that overran its deadline. Reported so the badge can say so rather
+    // than showing a confident "Scraping" over something that stopped moving.
+    stalled: isStalled(),
     stopping: isCancelling(),
     paused,
     canStop: Boolean(req.user.is_admin),
@@ -928,16 +932,23 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
  * remainder of the run rather than its results.
  */
 app.post('/api/scrape/stop', requireAuth, requireAdmin, async (req, res) => {
-  const wasRunning = isScraping();
-
   // The clock is stopped first, so nothing can slip in behind the stop.
   paused = true;
   clearTimeout(timer);
   nextRunAt = null;
 
-  const result = wasRunning ? await stopScraping() : { wasRunning: false };
-  console.log(`[scrape] stopped and paused by ${req.user.email}`);
-  res.json({ ok: true, stopped: wasRunning, paused: true, ...result });
+  /*
+   * Always asked, never guarded by isScraping(). A run past its deadline no
+   * longer counts as scraping, and that is exactly the run an owner most wants
+   * cleared -- guarding on it would make Stop do nothing in the one case that
+   * needs it most.
+   */
+  const result = await stopScraping();
+  console.log(
+    `[scrape] stopped and paused by ${req.user.email}` +
+      (result.stalled ? ' (a stalled run was holding the slot)' : ''),
+  );
+  res.json({ ok: true, stopped: result.wasRunning, paused: true, ...result });
 });
 
 /** Lets the clock run again. Only an explicit act lifts a pause. */

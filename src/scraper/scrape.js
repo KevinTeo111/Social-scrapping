@@ -44,14 +44,56 @@ import { findUser } from '../auth.js';
 let running = null;
 let runningUserId = null;
 let runningSince = null;
+let watchdog = null;
 
-export const isScraping = () => Boolean(running);
+/*
+ * A run that never finishes must never lock the instance out for good.
+ *
+ * Refusing extra runs made this failure far more expensive than it used to be.
+ * While runs queued, a wedged run meant a growing queue; now it means every
+ * member is turned away, forever, by a run that is not doing anything — a
+ * scraper stuck on a navigation that never resolves, or a Chromium that died in
+ * a way that left an await with nothing to settle it. The badge says "Scraping"
+ * and nothing scrapes, and no amount of clicking helps.
+ *
+ * So the slot has a deadline. Past it the run is considered abandoned: its
+ * browser is closed, the slot is handed back, and the next request — or the
+ * automatic refresh a minute later — starts a fresh run. The deadline is
+ * generous, because a full crawl legitimately takes a long time; it is a
+ * backstop against a hang, not a limit on honest work.
+ */
+const MAX_RUN_MS = Math.max(5, Number(process.env.SCRAPE_MAX_MINUTES) || 45) * 60_000;
+
+const runAge = () => (runningSince ? Date.now() - runningSince : 0);
+
+/** Holding the slot, but past the deadline — present, and not to be waited for. */
+export const isStalled = () => Boolean(running) && runAge() > MAX_RUN_MS;
+
+/** A run that is genuinely in progress. A stalled one does not count as one. */
+export const isScraping = () => Boolean(running) && !isStalled();
 export const scrapingUserId = () => runningUserId;
 export const scrapingSince = () => runningSince;
+export const scrapingAgeMs = () => (running ? runAge() : 0);
 
 /** Where a member stands right now: running their own, or not running at all. */
 export function runStateFor(userId) {
-  return running && runningUserId === userId ? 'running' : null;
+  return isScraping() && runningUserId === userId ? 'running' : null;
+}
+
+/**
+ * Gives up on the run holding the slot and hands the slot back.
+ *
+ * Closing the browser is what actually ends it: every pending Playwright call
+ * rejects at once, so the abandoned run unwinds through its own error handling
+ * instead of lingering beside whatever starts next. Nothing is rolled back —
+ * jobs are written as they are read.
+ */
+function abandonRun(why) {
+  const minutes = Math.round(runAge() / 60_000);
+  console.warn(`[scrape] ${why} — releasing a slot held for ${minutes} min`);
+  cancelling = true;
+  activeBrowser?.close().catch(() => {});
+  releaseSlot();
 }
 
 /**
@@ -105,41 +147,60 @@ export const currentProgress = () => progress;
  * would race across the awaits between it and here.
  */
 export function scrape(options = {}) {
+  // A slot held past the deadline is not a run anyone should wait behind.
+  if (isStalled()) abandonRun('a run overran its deadline');
   if (running) throw new ScrapeBusyError(runningUserId, runningSince);
 
   runningUserId = options.userId ?? null;
   runningSince = Date.now();
   running = runScrape(options).finally(releaseSlot);
+
+  /*
+   * Clears the badge without anyone having to click. Without this the slot only
+   * frees when the next request happens to arrive, so an instance nobody is
+   * watching would sit lit up and idle until somebody noticed.
+   */
+  clearTimeout(watchdog);
+  watchdog = setTimeout(() => {
+    if (isStalled()) abandonRun('a run stopped reporting');
+  }, MAX_RUN_MS + 30_000);
+  watchdog.unref?.();
+
   return running;
 }
 
 /**
- * Stops the run in flight.
+ * Stops the run in flight and hands the slot back immediately.
  *
  * Nothing is queued behind it to clear: a request that arrived while this run
  * held the slot was refused at the door, not parked.
+ *
+ * The slot is released here rather than left for the run to release on its way
+ * out, because the case that most needs stopping is the one where the run is
+ * not going to come out: a stop that leaves a wedged run holding the slot would
+ * refuse everybody afterwards, which is the opposite of what pressing Stop is
+ * asking for. Closing the browser rejects everything the old run had pending,
+ * so it unwinds rather than lingering beside whatever starts next.
  */
 export async function stopScraping() {
-  const stopped = { wasRunning: Boolean(running) };
-
-  if (running) {
-    cancelling = true;
-    // Closing the browser is what interrupts an in-flight navigation; without
-    // it the run would idle until whatever it was waiting on timed out. Not
-    // awaited: the flag has already done the deciding, and a close that hangs
-    // must not hang the request that asked for the stop.
-    activeBrowser?.close().catch(() => {});
-  }
-
+  const stopped = { wasRunning: Boolean(running), stalled: isStalled() };
+  if (running) abandonRun('stopped by hand');
   return stopped;
 }
 
-/** Frees the slot however the run ended, so a failure cannot wedge the instance. */
+/**
+ * Frees the slot however the run ended, so a failure cannot wedge the instance.
+ *
+ * `cancelling` is deliberately not cleared here. An abandoned run may still be
+ * unwinding, and that flag is how its loops know to stop; runScrape() clears it
+ * for itself on the way in, so the next run never inherits a stale stop.
+ */
 function releaseSlot() {
   running = null;
   runningUserId = null;
   runningSince = null;
-  cancelling = false;
+  clearTimeout(watchdog);
+  watchdog = null;
 }
 
 function listUrl({ page = 1, language, category, query } = {}) {

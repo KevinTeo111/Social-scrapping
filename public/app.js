@@ -1246,7 +1246,18 @@ async function pollStatus() {
     const dot = $('#statusDot');
     const text = $('#statusText');
 
-    if (s.scraping) {
+    if (s.stalled) {
+      /*
+       * Holding the slot but past its deadline. Saying "Scraping" here is how a
+       * board ends up lit up over nothing for hours, so say what is true: it
+       * stopped moving, and it will be cleared.
+       */
+      dot.className = 'status-dot error';
+      text.textContent = 'Last run stalled — clearing it';
+      text.title =
+        'A run stopped reporting progress and is being abandoned. The next ' +
+        'refresh will start a fresh one; the owner can clear it now with Stop.';
+    } else if (s.scraping) {
       dot.className = 'status-dot busy';
       const who = s.scrapingMine ? 'Scraping' : 'Another member is scraping';
       text.textContent = who + describeProgress(s.progress);
@@ -1294,7 +1305,9 @@ async function pollStatus() {
      * neither and the button is not there at all.
      */
     const stop = $('#stopBtn');
-    const busy = Boolean(s.scraping);
+    // A stalled run still holds the slot, so Stop must stay reachable for it —
+    // that is the button an owner needs when the board is stuck.
+    const busy = Boolean(s.scraping || s.stalled);
     stop.hidden = !s.canStop || (!busy && !s.paused);
     stop.disabled = Boolean(s.stopping);
     stop.classList.toggle('btn-go', Boolean(s.paused && !busy));
