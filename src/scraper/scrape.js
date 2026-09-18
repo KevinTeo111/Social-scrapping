@@ -44,7 +44,24 @@ import { findUser } from '../auth.js';
 let running = null;
 let runningUserId = null;
 let runningSince = null;
+let runningTrigger = 'auto';
 let watchdog = null;
+
+/*
+ * Who asked for this run: a person pressing a button, or the clock.
+ *
+ * The distinction matters because the background refresh borrows a member's
+ * Workana session to do its work — it has to, the scrape is only possible as
+ * somebody. Going by the session alone made the board tell everyone else that
+ * "another member is scraping" when nobody had touched anything, which invites
+ * them to go and ask a colleague what they are doing.
+ *
+ * 'auto' is the default on purpose. Only a button press says otherwise, so
+ * anything that forgets to declare itself is reported as the system rather than
+ * blamed on whoever's session it happened to borrow.
+ */
+export const scrapingTrigger = () => runningTrigger;
+export const isAutoRun = () => Boolean(running) && runningTrigger === 'auto';
 
 /*
  * A run that never finishes must never lock the instance out for good.
@@ -75,9 +92,12 @@ export const scrapingUserId = () => runningUserId;
 export const scrapingSince = () => runningSince;
 export const scrapingAgeMs = () => (running ? runAge() : 0);
 
-/** Where a member stands right now: running their own, or not running at all. */
+/**
+ * Where a member stands right now: running their own, or not running at all.
+ * A background refresh is nobody's run, even when it borrowed their session.
+ */
 export function runStateFor(userId) {
-  return isScraping() && runningUserId === userId ? 'running' : null;
+  return isScraping() && runningTrigger === 'manual' && runningUserId === userId ? 'running' : null;
 }
 
 /**
@@ -97,16 +117,18 @@ function abandonRun(why) {
 }
 
 /**
- * Thrown by scrape() when a run is already in flight. It carries whose run it is
- * and when it started so the caller can say that, rather than a bare "busy".
+ * Thrown by scrape() when a run is already in flight. It carries who asked for
+ * the run, whose session it uses and when it started, so the caller can say
+ * which of those it is rather than a bare "busy".
  */
 export class ScrapeBusyError extends Error {
-  constructor(userId, since) {
+  constructor(userId, since, trigger) {
     super('A scrape is already running');
     this.name = 'ScrapeBusyError';
     this.busy = true;
     this.userId = userId;
     this.since = since;
+    this.trigger = trigger;
   }
 }
 
@@ -149,10 +171,11 @@ export const currentProgress = () => progress;
 export function scrape(options = {}) {
   // A slot held past the deadline is not a run anyone should wait behind.
   if (isStalled()) abandonRun('a run overran its deadline');
-  if (running) throw new ScrapeBusyError(runningUserId, runningSince);
+  if (running) throw new ScrapeBusyError(runningUserId, runningSince, runningTrigger);
 
   runningUserId = options.userId ?? null;
   runningSince = Date.now();
+  runningTrigger = options.trigger === 'manual' ? 'manual' : 'auto';
   running = runScrape(options).finally(releaseSlot);
 
   /*
@@ -199,6 +222,7 @@ function releaseSlot() {
   running = null;
   runningUserId = null;
   runningSince = null;
+  runningTrigger = 'auto';
   clearTimeout(watchdog);
   watchdog = null;
 }

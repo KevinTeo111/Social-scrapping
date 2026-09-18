@@ -1259,9 +1259,21 @@ async function pollStatus() {
         'refresh will start a fresh one; the owner can clear it now with Stop.';
     } else if (s.scraping) {
       dot.className = 'status-dot busy';
-      const who = s.scrapingMine ? 'Scraping' : 'Another member is scraping';
+      /*
+       * The scheduled refresh runs as one of the members, because a scrape is
+       * only possible as somebody — but it is the system's work, not theirs.
+       * Calling it "another member" sent people off to ask a colleague what
+       * they were doing to the board.
+       */
+      const who = s.scrapingAuto
+        ? 'Auto-refreshing'
+        : s.scrapingMine
+          ? 'Scraping'
+          : 'Another member is scraping';
       text.textContent = who + describeProgress(s.progress);
-      text.title = describeBacklog(s.backlog);
+      text.title = s.scrapingAuto
+        ? `The board refreshes itself every ${s.autoScrapeMinutes} minutes. ` + describeBacklog(s.backlog)
+        : describeBacklog(s.backlog);
     } else if (s.lastError) {
       dot.className = 'status-dot error';
       text.textContent = s.lastError.slice(0, 60);
@@ -1281,9 +1293,11 @@ async function pollStatus() {
      */
     const since = s.scrapingSince ? `, started ${timeAgo(s.scrapingSince)}` : '';
     const whyBusy = s.scraping
-      ? s.scrapingMine
-        ? `Your scrape is still running${since}. Wait for it to finish.`
-        : `Another member is scraping right now${since}. The board is being refreshed for everyone.`
+      ? s.scrapingAuto
+        ? `The board is refreshing itself${since}. Wait for it to finish.`
+        : s.scrapingMine
+          ? `Your scrape is still running${since}. Wait for it to finish.`
+          : `Another member is scraping right now${since}. The board is being refreshed for everyone.`
       : null;
     // `scrapeRequested` covers the gap between the click and the server
     // claiming the slot: without it a poll landing in those few milliseconds

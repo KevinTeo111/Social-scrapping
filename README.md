@@ -108,7 +108,10 @@ Workana at once is heavy locally and a good way to get the whole instance rate-l
 them was worse than refusing: every run walks the same list pages, so a queue is the same work
 repeated while everyone waits longer. The board greys out Refresh and Full crawl while a run is
 going, and the background refresh re-checks a minute later instead of competing for the slot.
-That refresh rotates between members so no single account carries it.
+That refresh rotates between members so no single account carries it — and because it has to
+borrow somebody's Workana session to work at all, the board reports it as the system
+("Auto-refreshing") rather than blaming it on whichever member's session it happened to use.
+Only a button press is attributed to a person.
 
 ### Cookies
 

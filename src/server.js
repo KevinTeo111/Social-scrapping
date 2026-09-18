@@ -8,6 +8,7 @@ import {
   scrape,
   isScraping,
   isStalled,
+  isAutoRun,
   scrapingUserId,
   scrapingSince,
   ScrapeBusyError,
@@ -844,7 +845,13 @@ app.get('/api/status', requireAuth, async (req, res) => {
 
   res.json({
     scraping: isScraping(),
-    scrapingMine: scrapingUserId() === req.user.id,
+    /*
+     * The background refresh borrows somebody's session, so going by the
+     * session alone would report the clock's own work as that member's. Only a
+     * run a person actually asked for is anybody's.
+     */
+    scrapingAuto: isAutoRun(),
+    scrapingMine: !isAutoRun() && scrapingUserId() === req.user.id,
     // When it started, but never whose run it is. The board is shared; who is
     // driving it is not something one member needs to know about another.
     scrapingSince: scrapingSince() ? new Date(scrapingSince()).toISOString() : null,
@@ -893,17 +900,24 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
       userId: req.user.id,
       cookies,
       proxy,
+      trigger: 'manual',
     });
   } catch (err) {
     if (!(err instanceof ScrapeBusyError)) throw err;
-    const mine = err.userId === req.user.id;
+    // Three different situations, and telling them apart matters: only one of
+    // them is another person, and only one of them is worth waiting on.
+    const auto = err.trigger === 'auto';
+    const mine = !auto && err.userId === req.user.id;
     return res.status(409).json({
       busy: true,
+      scrapingAuto: auto,
       scrapingMine: mine,
       since: err.since ? new Date(err.since).toISOString() : null,
-      error: mine
-        ? 'Your scrape is still running. Wait for it to finish before starting another.'
-        : 'Another member is scraping right now. The board is being refreshed — wait for it to finish.',
+      error: auto
+        ? 'The board is refreshing itself right now. Wait for it to finish, then try again.'
+        : mine
+          ? 'Your scrape is still running. Wait for it to finish before starting another.'
+          : 'Another member is scraping right now. The board is being refreshed — wait for it to finish.',
     });
   }
 
@@ -1037,6 +1051,10 @@ function scheduleNext(delay = config.autoScrapeMinutes * 60_000) {
           userId: candidate.id,
           cookies,
           proxy: await getWorkanaProxy(candidate.id),
+          // The clock's own work. It borrows this member's session because a
+          // scrape is only possible as somebody, but it is not their run and
+          // the board must not report it as one.
+          trigger: 'auto',
         });
         lastError = null;
       }
