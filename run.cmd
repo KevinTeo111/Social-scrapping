@@ -15,6 +15,15 @@ rem   run.cmd my-bids         rebuild my proposal state           (add --apply)
 rem   run.cmd clean-tests     remove accounts left by the suites
 rem   run.cmd reset           empty the database (needs --scope, see the script)
 rem   run.cmd proposals       count every proposal from the Workana inbox
+rem   run.cmd migrate         copy the local SQLite corpus into Postgres (add --apply)
+rem
+rem Settings go in data\local.env, one NAME=value per line, for example
+rem
+rem   DATABASE_URL=postgresql://user:password@host/db?sslmode=require
+rem
+rem Every task reads it, so a connection string is written down once instead of
+rem being retyped into each shell. data\ is gitignored, so it never reaches the
+rem repository. A variable already set in the shell wins over the file.
 rem
 rem Set DATABASE_URL to work against Postgres instead of the local file.
 rem my-bids also needs APP_SECRET: it decrypts a stored Workana session in
@@ -46,10 +55,12 @@ if /i "%TASK%"=="my-bids"     set "SCRIPT=scripts\refresh-my-bids.mjs"
 if /i "%TASK%"=="clean-tests" set "SCRIPT=scripts\clean-test-accounts.mjs"
 if /i "%TASK%"=="reset"       set "SCRIPT=scripts\reset-database.mjs"
 if /i "%TASK%"=="proposals"   set "SCRIPT=scripts\sync-proposals.mjs"
+if /i "%TASK%"=="migrate"     set "SCRIPT=scripts\migrate-to-postgres.mjs"
 
 if "%SCRIPT%"=="" (
   echo Unknown task "%TASK%".
-  echo Tasks: start, scrape, login-check, verify, smoke, last-login, my-bids, clean-tests
+  echo Tasks: start, scrape, login-check, verify, smoke, last-login, my-bids,
+  echo        clean-tests, reset, proposals, migrate
   exit /b 1
 )
 
@@ -68,5 +79,5 @@ if /i "%TASK%"=="start" (
   echo   Starting Workana job board on http://127.0.0.1:4300
   echo.
 )
-"%NODE%" "%ROOT%%SCRIPT%"%ARGS%
+"%NODE%" --env-file-if-exists="%ROOT%data\local.env" "%ROOT%%SCRIPT%"%ARGS%
 exit /b %ERRORLEVEL%
