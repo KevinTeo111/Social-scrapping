@@ -97,11 +97,34 @@ console.log(`target : ${new URL(config.databaseUrl).host}\n`);
 
 await initDatabase();
 
+/*
+ * A hosted Postgres over the public internet can drop a connection mid-run: the
+ * compute scales down, a proxy recycles, a NAT forgets the flow. The pool throws
+ * a dead client away, so trying again gets a fresh one. Retrying an insert is
+ * safe because every insert here is ON CONFLICT: a chunk that did land the
+ * first time is skipped (or, with --replace, rewritten identically).
+ */
+const TRANSIENT = /terminated|ECONNRESET|ETIMEDOUT|EPIPE|timeout|connect/i;
+async function retry(what, fn, attempts = 5) {
+  for (let n = 1; ; n += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!TRANSIENT.test(err.message) || n >= attempts) throw err;
+      const wait = 3000 * n;
+      console.warn(`  ${what}: ${err.message} — retrying in ${wait / 1000}s (${n}/${attempts - 1})`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
 /** Columns present in both databases — anything else cannot be carried across. */
 async function sharedColumns(table) {
   const from = source.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
   const to = (
-    await all('SELECT column_name FROM information_schema.columns WHERE table_name = ?', [table])
+    await retry(`${table} columns`, () =>
+      all('SELECT column_name FROM information_schema.columns WHERE table_name = ?', [table]),
+    )
   ).map((c) => c.column_name);
   const shared = from.filter((c) => to.includes(c));
   const dropped = from.filter((c) => !to.includes(c));
@@ -115,7 +138,7 @@ for (const table of TABLES) {
     continue;
   }
   const rows = source.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
-  const existing = (await get(`SELECT COUNT(*) AS n FROM ${table}`)).n;
+  const existing = (await retry(`${table} count`, () => get(`SELECT COUNT(*) AS n FROM ${table}`))).n;
   const { shared, dropped } = await sharedColumns(table);
   plan.push({
     table,
@@ -167,10 +190,16 @@ for (const table of TABLES) {
         params.push(typeof v === 'bigint' ? Number(v) : v);
       }
     }
-    await run(
-      `INSERT INTO ${table} (${shared.join(', ')}) VALUES ${slice.map(() => tuple).join(',')} ${onConflict}`,
-      params,
+    await retry(`${table} rows ${i + 1}-${i + slice.length}`, () =>
+      run(
+        `INSERT INTO ${table} (${shared.join(', ')}) VALUES ${slice.map(() => tuple).join(',')} ${onConflict}`,
+        params,
+      ),
     );
+    // Large tables take minutes over a public connection; show that it moves.
+    if (rows.length > 5000 && (i / CHUNK) % 50 === 49) {
+      console.log(`  ${table} ${i + slice.length} / ${rows.length}`);
+    }
   }
 
   copied += rows.length;

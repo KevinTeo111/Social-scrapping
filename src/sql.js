@@ -86,6 +86,16 @@ async function openPostgres() {
   const pool = new pg.Pool({
     connectionString: config.databaseUrl,
     max: config.dbPoolSize,
+    /*
+     * A hosted Postgres reached over the public internet -- Neon especially,
+     * which scales its compute to zero when idle -- can stall a connect or drop
+     * a connection the pool still believes is healthy. Without a timeout the
+     * pool waits for a connection indefinitely, so a stall hangs the caller
+     * instead of failing it; keep-alive stops NATs and proxies on the way from
+     * silently forgetting a connection that sat idle between two scrapes.
+     */
+    connectionTimeoutMillis: 20_000,
+    keepAlive: true,
     // Railway terminates TLS with its own certificate chain.
     ssl: /\blocalhost\b|\b127\.0\.0\.1\b/.test(config.databaseUrl)
       ? false
