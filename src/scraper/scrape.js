@@ -244,6 +244,8 @@ async function runScrape({
   withDetails = true,
   detailBudget = config.detailBudget,
   insightBudget = config.insightBudget,
+  // Enrich only the jobs this run listed, not the backlog: a quick Refresh.
+  onlyListed = false,
   userId = null,
   cookies = null,
   proxy = null,
@@ -425,12 +427,21 @@ async function runScrape({
       }
     }
 
+    /*
+     * A Refresh is meant to be quick: the newest couple of pages and the jobs
+     * on them. Left to itself enrichment works through the whole backlog --
+     * up to DETAIL_BUDGET detail pages and INSIGHT_BUDGET insight pages across
+     * every job ever seen -- which turned a button press into minutes of work.
+     * The scheduled refresh and Full crawl still clear the backlog.
+     */
+    const listed = onlyListed ? [...seenSlugs] : null;
+
     if (withDetails && detailBudget > 0 && !cancelling) {
-      stats.details = await enrichDetails(context, { budget: detailBudget, onProgress, userId });
+      stats.details = await enrichDetails(context, { budget: detailBudget, onProgress, userId, only: listed });
     }
 
     if (insightBudget > 0 && !cancelling) {
-      stats.insights = await enrichInsights(context, { budget: insightBudget, onProgress, userId });
+      stats.insights = await enrichInsights(context, { budget: insightBudget, onProgress, userId, only: listed });
     }
 
     if (cancelling && !stats.error) {
@@ -465,16 +476,33 @@ async function runScrape({
  * duration, project size, client review history). Newest-first, and jobs whose
  * details we already have are skipped unless they look stale.
  */
-async function enrichDetails(context, { budget, onProgress = () => {}, userId = null }) {
-  const targets = (
+const NEEDS = {
+  details: 'detail_fetched_at IS NULL',
+  insights: 'insights_fetched_at IS NULL AND COALESCE(bids, 0) > 0',
+};
+
+/**
+ * Which jobs a run should enrich, newest first, up to `budget`.
+ *
+ * `only` restricts it to the jobs a run just listed -- a Refresh -- and null
+ * lets it work through the whole backlog. An empty list matches nothing, as it
+ * should: a Refresh that listed nothing has nothing of its own to enrich.
+ */
+export async function enrichmentTargets(kind, budget, only = null) {
+  const scope = only ? ` AND slug IN (${only.map(() => '?').join(', ') || 'NULL'})` : '';
+  return (
     await all(
       `SELECT slug FROM jobs
-        WHERE detail_fetched_at IS NULL
+        WHERE ${NEEDS[kind]}${scope}
         ORDER BY COALESCE(published_approx_at, published_at, first_seen_at) DESC
         LIMIT ?`,
-      [budget],
+      [...(only || []), budget],
     )
   ).map((r) => r.slug);
+}
+
+async function enrichDetails(context, { budget, onProgress = () => {}, userId = null, only = null }) {
+  const targets = await enrichmentTargets('details', budget, only);
 
   if (targets.length === 0) return 0;
 
@@ -616,16 +644,8 @@ export async function fetchInsights(slug, { userId = null, cookies = null, proxy
  * jobs that have bids but no contender data yet, newest first. Jobs with zero
  * bids are skipped -- the page would be empty.
  */
-async function enrichInsights(context, { budget, onProgress = () => {}, userId = null }) {
-  const targets = (
-    await all(
-      `SELECT slug FROM jobs
-        WHERE insights_fetched_at IS NULL AND COALESCE(bids, 0) > 0
-        ORDER BY COALESCE(published_approx_at, published_at, first_seen_at) DESC
-        LIMIT ?`,
-      [budget],
-    )
-  ).map((r) => r.slug);
+async function enrichInsights(context, { budget, onProgress = () => {}, userId = null, only = null }) {
+  const targets = await enrichmentTargets('insights', budget, only);
 
   if (!targets.length) return 0;
 

@@ -209,4 +209,10 @@ export const config = {
    *   .\start.ps1 scrape
    */
   refreshPages: num(process.env.REFRESH_PAGES, 5),
+  /**
+   * Pages the *Refresh button* walks. A button press should come back in
+   * seconds with what is new, so it reads the newest pages and enriches only
+   * the jobs on them; the scheduled refresh and Full crawl clear the backlog.
+   */
+  manualRefreshPages: num(process.env.MANUAL_REFRESH_PAGES, 2),
 };

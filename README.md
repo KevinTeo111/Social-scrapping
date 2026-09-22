@@ -330,6 +330,7 @@ All optional, via environment variables:
 | `DATABASE_URL` | — | Postgres connection string. Unset means the SQLite file below. `run.cmd` reads it from `data\local.env` |
 | `DB_POOL_SIZE` | `8` | Postgres connections per process; `3` suits a serverless board |
 | `DB_QUERY_TIMEOUT_MS` | `60000` | Any one query that takes longer fails, so a stalled connection cannot freeze the scraper |
+| `DB_LOG_SLOW_MS` | — | Print every query slower than this, network included — tells a slow query apart from a slow link |
 | `SCRAPE_MAX_MINUTES` | `45` | A run holding the slot longer than this is abandoned, however healthy it looks |
 | `APP_SECRET` | auto-generated | Encrypts stored Workana sessions. Set it explicitly in any shared deployment; losing it makes every stored session unreadable |
 | `ALLOW_REGISTRATION` | `1` | `0` closes sign-ups (the first account can always be created) |
@@ -343,6 +344,7 @@ All optional, via environment variables:
 | `HEADLESS` | `true` | `false` passes challenges more reliably if you get blocked |
 | `AUTO_SCRAPE_MINUTES` | `10` | Background refresh cadence; `0` disables |
 | `REFRESH_PAGES` | `5` | Pages the *background* refresh walks (new jobs land on page 1) |
+| `MANUAL_REFRESH_PAGES` | `2` | Pages the **Refresh button** walks. It then enriches only the jobs on those pages, so it returns in seconds; the backlog is left to the background refresh and Full crawl |
 | `MAX_LIST_PAGES` | `250` | Safety cap for a full crawl, not a target |
 | `EMPTY_PAGE_RETRIES` | `2` | Retries before an empty page is accepted as the end |
 | `DETAIL_BUDGET` | `100` | Detail pages enriched per run |

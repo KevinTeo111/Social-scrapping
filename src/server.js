@@ -14,6 +14,7 @@
  */
 import { config } from './config.js';
 import { get, initDatabase } from './db.js';
+import { warmUp } from './sql.js';
 import { userCount } from './auth.js';
 
 const roleFlag = process.argv.find((a) => a.startsWith('--role='))?.slice('--role='.length);
@@ -55,6 +56,15 @@ for (let attempt = 1; ; attempt += 1) {
     }
     process.exit(1);
   }
+}
+
+/*
+ * A board page load asks for several queries at once. Opening the connections
+ * for them now, in the background, means the first page after startup does not
+ * wait for a handshake per query. Not awaited: startup should not wait on it.
+ */
+if (serveBoard && config.databaseUrl) {
+  warmUp(4).catch((err) => console.warn(`  (could not pre-open connections: ${err.message})`));
 }
 
 let worker = null;

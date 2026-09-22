@@ -95,6 +95,16 @@ async function openPostgres() {
      * silently forgetting a connection that sat idle between two scrapes.
      */
     connectionTimeoutMillis: 20_000,
+    /*
+     * Opening a connection to a hosted Postgres costs a TLS handshake and an
+     * authentication exchange -- two to three seconds from a workstation whose
+     * traffic goes out through a VPN. The pool's default closes a connection
+     * after ten idle seconds, so the board kept paying that again between
+     * clicks. Idle connections are kept instead (0 = never closed for being
+     * idle); one that has actually died is noticed by keep-alive or by the next
+     * query, and replaced.
+     */
+    idleTimeoutMillis: 0,
     keepAlive: true,
     // The OS default before the first keep-alive probe is two hours; a dead
     // connection should be noticed in seconds.
@@ -119,7 +129,20 @@ async function openPostgres() {
 
   return {
     async query(sql, params) {
-      const r = await pool.query(toPgPlaceholders(sql), params);
+      const text = toPgPlaceholders(sql);
+      const started = performance.now();
+      let r;
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          r = await pool.query(text, params);
+          break;
+        } catch (err) {
+          // Reads only: a write whose connection died may already have been
+          // applied, and running it again could apply it twice.
+          if (attempt >= 3 || !DROPPED.test(err.message) || !READ_ONLY.test(sql)) throw err;
+        }
+      }
+      logIfSlow(sql, performance.now() - started);
       return { rows: r.rows, changes: r.rowCount };
     },
     async exec(sql) {
@@ -146,8 +169,45 @@ async function openPostgres() {
         client.release();
       }
     },
+    /*
+     * Opens connections ahead of need, one at a time: a page load asks for
+     * several queries at once, and each connection opened on demand then costs
+     * seconds -- several opened together is also what made Neon drop some.
+     * Each is held until the next one exists, so the pool cannot hand the same
+     * connection back and stop growing.
+     */
+    async warm(n) {
+      const held = [];
+      try {
+        while (held.length < n && pool.totalCount < config.dbPoolSize) held.push(await pool.connect());
+      } finally {
+        for (const client of held) client.release();
+      }
+      return held.length;
+    },
     close: () => pool.end(),
   };
+}
+
+/*
+ * A new connection dropped mid-handshake -- which Neon did when several were
+ * opened at once from a workstation -- fails the query on it. For a read the
+ * cure is simply to ask again on another connection.
+ */
+const DROPPED = /terminated unexpectedly|Connection terminated|ECONNRESET|EPIPE|timeout exceeded when trying to connect/i;
+const READ_ONLY = /^\s*(SELECT|WITH)\b(?![\s\S]*\b(INSERT|UPDATE|DELETE)\b)/i;
+
+/*
+ * DB_LOG_SLOW_MS=500 prints every query that took longer than that, with the
+ * time measured from here -- so it includes the network, which is the point:
+ * it tells a slow query apart from a slow link, and a slow board is usually one
+ * or the other. Off unless set.
+ */
+const SLOW_MS = Number(process.env.DB_LOG_SLOW_MS) || 0;
+function logIfSlow(sql, ms) {
+  if (!SLOW_MS || ms < SLOW_MS) return;
+  const text = sql.replace(/\s+/g, ' ').trim();
+  console.warn(`[db] ${Math.round(ms)} ms  ${text.length > 160 ? `${text.slice(0, 160)}…` : text}`);
 }
 
 async function openSqlite() {
@@ -254,6 +314,12 @@ export async function exec(sql, target) {
 export async function tx(fn) {
   const d = await connect();
   return d.transaction(fn);
+}
+
+/** Opens up to `n` connections in the background (Postgres only); see warm(). */
+export async function warmUp(n) {
+  const d = await connect();
+  return d.warm ? d.warm(n) : 0;
 }
 
 export async function close() {

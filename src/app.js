@@ -123,7 +123,8 @@ app.get('/api/me', async (req, res) => {
   res.json({
     user: publicUser(req.user),
     registrationOpen: config.allowRegistration,
-    needsBootstrap: (await userCount()) === 0,
+    // A signed-in user is an account, so there is nothing to count.
+    needsBootstrap: req.user ? false : (await userCount()) === 0,
   });
 });
 
@@ -568,23 +569,26 @@ app.get('/api/jobs', requireAuth, async (req, res) => {
     const limit = Math.min(Number(q.limit) || 50, 200);
     const offset = Math.max(Number(q.offset) || 0, 0);
 
-    const total = (await get(`SELECT COUNT(*) AS n ${BASE_FROM} ${join} ${where}`, params)).n;
-    const rows = await all(
-      `SELECT ${SELECT_COLUMNS} ${BASE_FROM} ${join} ${where} ${order} LIMIT ? OFFSET ?`,
-      [...params, limit, offset],
-    );
-
     // Tab counts respect every filter except the contract type itself.
     const tab = buildQuery({ ...q, type: undefined }, uid);
-    const counts = await get(
-      `SELECT COUNT(*) AS all_count,
-              SUM(CASE WHEN j.is_hourly = 1 THEN 1 ELSE 0 END) AS hourly,
-              SUM(CASE WHEN j.is_hourly = 0 THEN 1 ELSE 0 END) AS fixed
-       ${BASE_FROM} ${tab.join} ${tab.where}`,
-      tab.params,
-    );
 
-    res.json({ total, limit, offset, counts, jobs: rows.map(jsonSafe) });
+    // Three independent queries, issued together: one round trip, not three.
+    const [totalRow, rows, counts] = await Promise.all([
+      get(`SELECT COUNT(*) AS n ${BASE_FROM} ${join} ${where}`, params),
+      all(
+        `SELECT ${SELECT_COLUMNS} ${BASE_FROM} ${join} ${where} ${order} LIMIT ? OFFSET ?`,
+        [...params, limit, offset],
+      ),
+      get(
+        `SELECT COUNT(*) AS all_count,
+                SUM(CASE WHEN j.is_hourly = 1 THEN 1 ELSE 0 END) AS hourly,
+                SUM(CASE WHEN j.is_hourly = 0 THEN 1 ELSE 0 END) AS fixed
+         ${BASE_FROM} ${tab.join} ${tab.where}`,
+        tab.params,
+      ),
+    ]);
+
+    res.json({ total: totalRow.n, limit, offset, counts, jobs: rows.map(jsonSafe) });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -648,44 +652,54 @@ app.get('/api/jobs/:slug', requireAuth, async (req, res) => {
 // column when one exists, and both `jobs.slug` and `clients.name` collide with
 // the aliases these queries want. Always group by the underlying expression.
 app.get('/api/facets', requireAuth, async (_req, res) => {
-  const categories = await all(
+  // Four independent queries, issued together: one round trip, not four.
+  const [categories, subcategories, countries, skillRows] = await Promise.all([
+    all(
       `SELECT COALESCE(j.category, 'Uncategorised') AS name, j.category_slug AS slug, COUNT(*) AS n
          FROM jobs j WHERE NOT ${CLOSED_SQL}
         GROUP BY COALESCE(j.category, 'Uncategorised'), j.category_slug ORDER BY n DESC`,
-    );
-  const subcategories = await all(
+    ),
+    all(
       `SELECT j.subcategory AS name, j.category AS parent, COUNT(*) AS n FROM jobs j
         WHERE j.subcategory IS NOT NULL AND NOT ${CLOSED_SQL}
         GROUP BY j.subcategory, j.category ORDER BY n DESC LIMIT 120`,
-    );
-  const countries = await all(
+    ),
+    all(
       `SELECT c.country AS name, c.country_code AS code, COUNT(*) AS n
          FROM jobs j JOIN clients c ON c.id = j.client_id
         WHERE c.country IS NOT NULL AND NOT ${CLOSED_SQL}
         GROUP BY c.country, c.country_code ORDER BY n DESC`,
-    );
+    ),
+    /*
+     * Skills live inside each job's JSON array. Counting them used to mean
+     * shipping every open job's array to the server and tallying in JS -- a
+     * quarter of a megabyte per page load, which through a slow link cost more
+     * than every other query here together. The database unpacks and counts
+     * them instead and sends back only the totals.
+     */
+    all(
+      isPostgres
+        ? `SELECT s->>'slug' AS slug, MAX(s->>'name') AS name, COUNT(*) AS n
+             FROM jobs j CROSS JOIN LATERAL jsonb_array_elements(j.skills::jsonb) AS s
+            WHERE j.skills IS NOT NULL AND j.skills LIKE '[%' AND NOT ${CLOSED_SQL}
+              AND s->>'slug' IS NOT NULL
+            GROUP BY s->>'slug' ORDER BY n DESC, slug LIMIT 300`
+        : `SELECT json_extract(s.value, '$.slug') AS slug, MAX(json_extract(s.value, '$.name')) AS name,
+                  COUNT(*) AS n
+             FROM jobs j, json_each(j.skills) AS s
+            WHERE j.skills IS NOT NULL AND json_valid(j.skills) AND NOT ${CLOSED_SQL}
+              AND json_extract(s.value, '$.slug') IS NOT NULL
+            GROUP BY json_extract(s.value, '$.slug') ORDER BY n DESC, slug LIMIT 300`,
+    ),
+  ]);
 
-  // Skills live inside a JSON blob, so tally them in JS rather than SQL.
-  const tally = new Map();
-  for (const row of await all(`SELECT j.skills FROM jobs j WHERE j.skills IS NOT NULL AND NOT ${CLOSED_SQL}`)) {
-    let list = [];
-    try {
-      list = JSON.parse(row.skills);
-    } catch {}
-    for (const s of list) {
-      if (!s?.slug) continue;
-      const entry = tally.get(s.slug) || { name: s.name, slug: s.slug, n: 0 };
-      entry.n += 1;
-      tally.set(s.slug, entry);
-    }
-  }
-  const skills = [...tally.values()].sort((a, b) => b.n - a.n).slice(0, 300);
+  const skills = skillRows.map((r) => ({ name: r.name, slug: r.slug, n: Number(r.n) }));
 
   res.json({ categories, subcategories, countries, skills });
 });
 
 app.get('/api/stats', requireAuth, async (req, res) => {
-  const totals = await get(
+  const totalsQ = get(
       `SELECT COUNT(*) AS jobs,
               SUM(CASE WHEN is_hourly=1 THEN 1 ELSE 0 END) AS hourly,
               SUM(CASE WHEN is_hourly=0 THEN 1 ELSE 0 END) AS fixed,
@@ -696,7 +710,7 @@ app.get('/api/stats', requireAuth, async (req, res) => {
       [req.user.id],
     );
 
-  const byCategory = await all(
+  const byCategoryQ = all(
       `SELECT COALESCE(category,'Unknown') AS name, COUNT(*) AS n,
               -- Postgres has round(numeric, int) but no round(double, int), and
               -- AVG over these columns is a double. The cast satisfies both.
@@ -705,19 +719,19 @@ app.get('/api/stats', requireAuth, async (req, res) => {
          FROM jobs GROUP BY COALESCE(category,'Unknown') ORDER BY n DESC LIMIT 15`,
     );
 
-  const byDay = await all(
+  const byDayQ = all(
       `SELECT substr(COALESCE(published_approx_at, published_at, first_seen_at), 1, 10) AS day,
               COUNT(*) AS n
          FROM jobs GROUP BY day ORDER BY day DESC LIMIT 21`,
     );
 
-  const byCountry = await all(
+  const byCountryQ = all(
       `SELECT c.country AS name, c.country_code AS code, COUNT(*) AS n
          FROM jobs j JOIN clients c ON c.id=j.client_id
         WHERE c.country IS NOT NULL GROUP BY c.country, c.country_code ORDER BY n DESC LIMIT 12`,
     );
 
-  const budgets = await all(
+  const budgetsQ = all(
       `SELECT is_hourly,
               ROUND(CAST(AVG(COALESCE(budget_min, budget_max)) AS NUMERIC),0) AS avg_min,
               ROUND(CAST(AVG(COALESCE(budget_max, budget_min)) AS NUMERIC),0) AS avg_max,
@@ -737,7 +751,7 @@ app.get('/api/stats', requireAuth, async (req, res) => {
    * `appearances` counts jobs, not proposals: a freelancer shows up at most once
    * per insights page, since job_insights is keyed by (job_slug, freelancer).
    */
-  const developers = await all(
+  const developersQ = all(
     `SELECT freelancer AS name,
             COUNT(*)                  AS appearances,
             SUM(in_contact)           AS contacted,
@@ -770,13 +784,13 @@ app.get('/api/stats', requireAuth, async (req, res) => {
    * restricted to cards that said minutes or hours: a "5 days ago" card would
    * contribute the hour we scraped it, not the hour it was posted.
    */
-  const loginHours = await all(
+  const loginHoursQ = all(
     `SELECT CAST(substr(last_login_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS n
        FROM clients WHERE last_login_at IS NOT NULL
       GROUP BY CAST(substr(last_login_at, 12, 2) AS INTEGER)`,
   );
 
-  const postHours = await all(
+  const postHoursQ = all(
     `SELECT CAST(substr(published_approx_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS n
        FROM jobs
       WHERE published_approx_at IS NOT NULL
@@ -796,7 +810,7 @@ app.get('/api/stats', requireAuth, async (req, res) => {
   // whether a posting is still being watched by anyone.
   const now = Date.now();
   const at = (h) => new Date(now - h * 3600e3).toISOString();
-  const recency = await get(
+  const recencyQ = get(
     `SELECT
        SUM(CASE WHEN last_login_at >= ? THEN 1 ELSE 0 END) AS h1,
        SUM(CASE WHEN last_login_at >= ? AND last_login_at < ? THEN 1 ELSE 0 END) AS h6,
@@ -808,6 +822,28 @@ app.get('/api/stats', requireAuth, async (req, res) => {
     [at(1), at(6), at(1), at(24), at(6), at(72), at(24), at(72)],
   );
 
+  const topSkillsQ = all('SELECT skills FROM jobs WHERE skills IS NOT NULL');
+
+  /*
+   * Every query above is independent of the others, so they were all issued
+   * without waiting and are collected here together: one round trip to the
+   * database instead of ten, which from a workstation to a hosted Postgres is
+   * the difference between a third of a second and several seconds.
+   */
+  const [totals, byCategory, byDay, byCountry, budgets, developers, loginHours, postHours, recency, topSkills] =
+    await Promise.all([
+      totalsQ,
+      byCategoryQ,
+      byDayQ,
+      byCountryQ,
+      budgetsQ,
+      developersQ,
+      loginHoursQ,
+      postHoursQ,
+      recencyQ,
+      topSkillsQ,
+    ]);
+
   const clientActivity = {
     loginByHourUtc: spread(loginHours),
     postedByHourUtc: spread(postHours),
@@ -815,7 +851,6 @@ app.get('/api/stats', requireAuth, async (req, res) => {
     recency,
   };
 
-  const topSkills = await all('SELECT skills FROM jobs WHERE skills IS NOT NULL');
   const tally = new Map();
   for (const r of topSkills) {
     let list = [];
@@ -900,8 +935,11 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
   if (!workerOnline(await readControl())) return res.status(503).json({ offline: true, error: OFFLINE });
 
   const { pages, category, query, detailBudget } = req.body || {};
+  // The Refresh button sends no page count; Full crawl does.
+  const refresh = !Number(pages);
   const options = {
-    pages: Number(pages) || config.refreshPages,
+    pages: Number(pages) || config.manualRefreshPages,
+    onlyListed: refresh,
     category: category ?? config.category,
     query: query || '',
     // `Number(undefined) ?? default` is NaN, not the default, and a NaN budget

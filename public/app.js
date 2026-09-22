@@ -1261,7 +1261,7 @@ function describeBacklog(b) {
  * can only come back as an error.
  */
 let scrapeRequested = false;
-const REFRESH_TIP = 'Sweep the newest pages for new postings';
+const REFRESH_TIP = 'Fetch the newest two pages of postings, with their details and contacts';
 const CRAWL_TIP = 'Walk the whole category to the end — slow, but fills an empty instance';
 
 async function pollStatus() {
@@ -1845,8 +1845,8 @@ let statusTimer = null;
 
 async function startApp() {
   $('#accountLabel').textContent = me.name || me.email.split('@')[0];
-  await loadFacets();
-  await load();
+  // Neither needs the other, so the list does not wait behind the filters.
+  await Promise.all([loadFacets(), load()]);
   pollStatus();
   clearInterval(statusTimer);
   statusTimer = setInterval(pollStatus, 5000);
