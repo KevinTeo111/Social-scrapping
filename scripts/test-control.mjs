@@ -81,6 +81,20 @@ await c.claimSlot({ userId: 1, trigger: 'manual', state: 'requested' });
 s = await c.requestStop();
 ok('stop on a run nobody picked up frees it directly', s.direct && (await c.readControl()).state === 'idle');
 
+// 5b. A quick check must not touch the full refresh's schedule, or checks every
+//     couple of minutes would push the full refresh back forever.
+await reset();
+const booked = c.iso(Date.now() + 10 * 60_000);
+await run('UPDATE scrape_control SET next_run_at = ? WHERE id = 1', [booked]);
+const tq = await c.claimSlot({ userId: 1, trigger: 'auto', options: { kind: 'sweep', pages: 1 }, state: 'running' });
+ok('status names a quick check as such', c.describeSlot(await c.readControl(), 1).scrapingKind === 'sweep');
+await c.finishRun(tq, { bookNext: false });
+r = await c.readControl();
+ok('finishing a quick check leaves the full refresh where it was', r.state === 'idle' && r.next_run_at === booked);
+const tf = await c.claimSlot({ userId: 1, trigger: 'auto', options: { kind: 'full' }, state: 'running' });
+await c.finishRun(tf, {});
+ok('finishing a full refresh books the next one', (await c.readControl()).next_run_at !== booked);
+
 // 6. Presence.
 await reset();
 ok('never seen -> offline', !c.workerOnline(await c.readControl()));

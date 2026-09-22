@@ -188,6 +188,12 @@ none yet fetches them on the spot.
   the full client profile, description (Markdown rendered), skills, other bidders, the
   client's feedback history, their other postings, and a private notes field.
 - **Statistics** — volume per day, breakdown by category and country, most-requested skills.
+- **New postings arrive on their own.** The scraper checks page 1 every `SWEEP_MINUTES`
+  (2 by default), and the list redraws as soon as a run reports new jobs rather than when
+  the run ends. **Alerts** in the toolbar adds a desktop notification and a chime for each
+  new job that matches the filters currently set — narrow them first (a search, a budget,
+  a category) to be told only about work you would bid on. Alerts need the board open in a
+  tab (a background tab is fine) and are remembered per browser.
 - Starring, hiding and notes are stored locally in `user_flags` and never leave the machine.
 
 ## Giving other developers a URL
@@ -329,7 +335,7 @@ All optional, via environment variables:
 | `ROLE` | `all` | `all` serves the board and runs the scraper; `worker` scrapes only (board on Vercel); `web` serves only. `--role=` on the command line does the same |
 | `DATABASE_URL` | — | Postgres connection string. Unset means the SQLite file below. `run.cmd` reads it from `data\local.env` |
 | `DB_POOL_SIZE` | `8` | Postgres connections per process; `3` suits a serverless board |
-| `DB_QUERY_TIMEOUT_MS` | `60000` | Any one query that takes longer fails, so a stalled connection cannot freeze the scraper |
+| `DB_QUERY_TIMEOUT_MS` | `30000` | Any one query that takes longer fails, so a stalled connection cannot freeze the scraper |
 | `DB_LOG_SLOW_MS` | — | Print every query slower than this, network included — tells a slow query apart from a slow link |
 | `SCRAPE_MAX_MINUTES` | `45` | A run holding the slot longer than this is abandoned, however healthy it looks |
 | `APP_SECRET` | auto-generated | Encrypts stored Workana sessions. Set it explicitly in any shared deployment; losing it makes every stored session unreadable |
@@ -342,7 +348,9 @@ All optional, via environment variables:
 | `WORKANA_CATEGORY` | `it-programming` | Category to crawl; empty string crawls all |
 | `WORKANA_LANGUAGE` | `en,pt,es` | Project languages — see the truncation note above |
 | `HEADLESS` | `true` | `false` passes challenges more reliably if you get blocked |
-| `AUTO_SCRAPE_MINUTES` | `10` | Background refresh cadence; `0` disables |
+| `AUTO_SCRAPE_MINUTES` | `10` | Full background refresh — `REFRESH_PAGES` pages plus backlog details and contacts — this long after the previous one ends; `0` disables |
+| `SWEEP_MINUTES` | `2` | The quick check for new postings: the newest `SWEEP_PAGES` page(s) and details for jobs not seen before, this often, timed from when the previous check *started*. This is what decides how soon a new posting reaches the board. `0` disables; set both this and `AUTO_SCRAPE_MINUTES` to `0` for no automatic scraping at all |
+| `SWEEP_PAGES` | `1` | Pages the quick check reads — new postings land on page 1 |
 | `REFRESH_PAGES` | `5` | Pages the *background* refresh walks (new jobs land on page 1) |
 | `MANUAL_REFRESH_PAGES` | `2` | Pages the **Refresh button** walks. It then enriches only the jobs on those pages, so it returns in seconds; the backlog is left to the background refresh and Full crawl |
 | `MAX_LIST_PAGES` | `250` | Safety cap for a full crawl, not a target |
@@ -407,8 +415,11 @@ scripts/               verify.mjs, inspect-db.mjs, shot.mjs diagnostics
                        backfill-posted.mjs, backfill-bids.mjs repairs
                        (both default to a dry run; pass --apply to write)
                        test-control.mjs, test-split.mjs: the scrape slot, and the
-                       board-on-Vercel + separate scraper, end to end. Both refuse
-                       to run against a database whose name lacks "test"
+                       board-on-Vercel + separate scraper, end to end.
+                       test-freshness.mjs: the quick-check schedule, the list
+                       redrawing mid-run, and browser alerts in a real browser.
+                       All three refuse to run against a database whose name
+                       lacks "test"
 ```
 
 ## Scope

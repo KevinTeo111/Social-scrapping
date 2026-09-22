@@ -643,6 +643,175 @@ async function openDrawer(slug, tr) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Browser alerts for new postings                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Being among the first to bid is much of what wins a project, so the board can
+ * say when a new posting that fits your filters arrives -- a desktop
+ * notification and a short chime -- instead of relying on someone watching it.
+ *
+ * It works while the board is open in a tab, including a background one. The
+ * switch is remembered per browser, which is also where the permission lives,
+ * so localStorage is the right home for it.
+ */
+const ALERTS_KEY = 'wk.alerts';
+let alertsOn = false;
+/** `first_seen_at` of the newest job already accounted for. */
+let alertCursor = null;
+const alerted = new Set();
+let audio = null;
+let unseen = 0;
+const baseTitle = document.title;
+
+function readAlertPref() {
+  try { return localStorage.getItem(ALERTS_KEY) === '1'; } catch { return false; }
+}
+function writeAlertPref(on) {
+  try { localStorage.setItem(ALERTS_KEY, on ? '1' : '0'); } catch { /* private window */ }
+}
+
+function paintAlertsBtn() {
+  const btn = $('#alertsBtn');
+  if (!btn) return;
+  const blocked = !('Notification' in window) || Notification.permission === 'denied';
+  btn.classList.toggle('btn-go', alertsOn);
+  btn.querySelector('.ico').textContent = alertsOn ? '🔔' : '🔕';
+  btn.title = !alertsOn
+    ? 'Get a notification and a chime when a new job matching your filters appears'
+    : blocked
+      ? 'Alerts are on, but this browser blocks notifications for the site, so only the chime plays. Click to turn off.'
+      : 'Alerts are on: a notification and a chime for each new job matching your filters. Click to turn off.';
+}
+
+/** Counts from now, so switching alerts on does not announce the whole board. */
+async function resetAlertCursor() {
+  try {
+    const data = await (await fetch('/api/jobs?sort=discovered&limit=1&showClosed=1')).json();
+    alertCursor = data.jobs?.[0]?.first_seen_at || new Date(0).toISOString();
+  } catch {
+    alertCursor = new Date().toISOString();
+  }
+}
+
+/** A short two-note chime, made on the spot so there is no sound file to ship. */
+function chime() {
+  try {
+    audio ??= new (window.AudioContext || window.webkitAudioContext)();
+    const t = audio.currentTime;
+    [880, 1320].forEach((freq, i) => {
+      const at = t + i * 0.18;
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.25, at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.16);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(at);
+      osc.stop(at + 0.17);
+    });
+  } catch { /* no audio available */ }
+}
+
+/*
+ * Browsers only let a page make sound after the person has interacted with it.
+ * With alerts remembered from an earlier visit there has been no click yet, so
+ * the first interaction of any kind unlocks the chime.
+ */
+for (const type of ['pointerdown', 'keydown']) {
+  document.addEventListener(type, () => {
+    try { audio ??= new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch { /* ignore */ }
+  }, { once: true });
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { unseen = 0; document.title = baseTitle; }
+});
+
+function announce(jobs) {
+  chime();
+  if (document.hidden) {
+    unseen += jobs.length;
+    document.title = `(${unseen}) ${baseTitle}`;
+  }
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const first = jobs[0];
+  const title = jobs.length === 1
+    ? `New job: ${first.title}`
+    : `${jobs.length}${jobs.length >= 20 ? '+' : ''} new jobs on Workana`;
+  const body = jobs.length === 1
+    ? [first.budget_text, first.client_country].filter(Boolean).join(' · ')
+    : jobs.slice(0, 3).map((j) => `• ${j.title}`).join('\n');
+  const n = new Notification(title, { body, tag: 'workana-new-jobs', renotify: true });
+  n.onclick = () => {
+    window.focus();
+    if (jobs.length === 1) openDrawer(first.slug);
+    n.close();
+  };
+}
+
+/**
+ * Asks for jobs first collected since the last check that match the filters as
+ * they are set right now, and announces any not announced before.
+ */
+async function checkNewJobs() {
+  if (!alertsOn || !alertCursor) return;
+  const p = new URLSearchParams(queryString());
+  for (const k of ['sort', 'limit', 'offset']) p.delete(k);
+  p.set('sort', 'discovered');
+  p.set('limit', '20');
+  p.set('seenAfter', alertCursor);
+  let data;
+  try {
+    const res = await fetch(`/api/jobs?${p}`);
+    if (!res.ok) return;
+    data = await res.json();
+  } catch {
+    return;
+  }
+  const jobs = data.jobs || [];
+  for (const j of jobs) if (j.first_seen_at > alertCursor) alertCursor = j.first_seen_at;
+  const fresh = jobs.filter((j) => !alerted.has(j.slug));
+  if (!fresh.length) return;
+  for (const j of fresh) alerted.add(j.slug);
+  announce(fresh);
+}
+
+$('#alertsBtn').onclick = async () => {
+  if (alertsOn) {
+    alertsOn = false;
+    writeAlertPref(false);
+    paintAlertsBtn();
+    toast('Alerts off');
+    return;
+  }
+  /*
+   * "From now" is fixed first, before anything that can take a while: the
+   * permission prompt waits on a person, and a job arriving meanwhile must
+   * still be announced rather than counted as already seen.
+   */
+  // The button answers at once; announcing starts once the cursor is set
+  // (checkNewJobs() waits for it).
+  alertsOn = true;
+  writeAlertPref(true);
+  paintAlertsBtn();
+  await resetAlertCursor();
+  // This click is the gesture browsers require before a page may make sound.
+  // Not awaited: starting audio can be slow, and nothing here depends on it.
+  try { audio ??= new (window.AudioContext || window.webkitAudioContext)(); audio.resume().catch(() => {}); } catch { /* ignore */ }
+  if ('Notification' in window && Notification.permission === 'default') {
+    await Notification.requestPermission();
+  }
+  paintAlertsBtn();
+  const granted = 'Notification' in window && Notification.permission === 'granted';
+  toast(granted
+    ? 'Alerts on: you will be told when a new job matching your filters appears'
+    : 'Notifications are blocked for this site, so alerts will only chime. Allow them in the browser to see them.');
+  chime(); // so the sound is recognisable when it matters
+};
+
 /**
  * Asks the scraper's machine for one job's insights.
  *
@@ -1302,15 +1471,21 @@ async function pollStatus() {
        * Calling it "another member" sent people off to ask a colleague what
        * they were doing to the board.
        */
-      const who = s.scrapingAuto
-        ? 'Auto-refreshing'
-        : s.scrapingMine
-          ? 'Scraping'
-          : 'Another member is scraping';
-      text.textContent = who + describeProgress(s.progress);
-      text.title = s.scrapingAuto
-        ? `The board refreshes itself every ${s.autoScrapeMinutes} minutes. ` + describeBacklog(s.backlog)
-        : describeBacklog(s.backlog);
+      const sweep = s.scrapingAuto && s.scrapingKind === 'sweep';
+      const who = sweep
+        ? 'Checking for new jobs'
+        : s.scrapingAuto
+          ? 'Auto-refreshing'
+          : s.scrapingMine
+            ? 'Scraping'
+            : 'Another member is scraping';
+      // A quick check is one page; its progress would only repeat "page 1".
+      text.textContent = sweep ? `${who}…` : who + describeProgress(s.progress);
+      text.title = sweep
+        ? `The board looks at the newest postings every ${s.sweepMinutes} minutes.`
+        : s.scrapingAuto
+          ? `The board refreshes itself every ${s.autoScrapeMinutes} minutes. ` + describeBacklog(s.backlog)
+          : describeBacklog(s.backlog);
     } else if (s.lastError) {
       dot.className = 'status-dot error';
       text.textContent = s.lastError.slice(0, 60);
@@ -1318,7 +1493,11 @@ async function pollStatus() {
       dot.className = s.paused ? 'status-dot error' : 'status-dot';
       const loaded = s.lastRun?.finished_at ? new Date(s.lastRun.finished_at).toLocaleTimeString() : '—';
       text.textContent = s.paused ? `Paused · loaded ${loaded}` : `Loaded ${loaded}`;
-      text.title = describeBacklog(s.backlog);
+      text.title =
+        (!s.paused && s.nextSweepAt
+          ? `Next check for new jobs ${new Date(s.nextSweepAt).toLocaleTimeString()} ` +
+            `(every ${s.sweepMinutes} min). `
+          : '') + describeBacklog(s.backlog);
     }
     $('#totalCount').textContent = `${s.total} total`;
 
@@ -1370,8 +1549,33 @@ async function pollStatus() {
         ? 'Automatic refreshing is paused. Start it again.'
         : 'Stop the run and hold off the automatic refresh';
 
-    if (pollStatus.wasScraping && !s.scraping) { load(); loadFacets(); }
-    pollStatus.wasScraping = s.scraping;
+    /*
+     * When to redraw the list.
+     *
+     * New postings are in the database as soon as their list page is read, but
+     * the list used to redraw only when the whole run ended -- up to eight
+     * minutes later on a full refresh, while the details and contacts of other
+     * jobs were being fetched. Now it redraws as soon as a run reports new jobs,
+     * and again when a run finishes. "Finished" is taken from the last run's
+     * record rather than from having watched it scrape: a quick check can start
+     * and end between two of these polls.
+     */
+    const found = s.scraping ? Number(s.progress?.newJobs || 0) : 0;
+    const sameRun = s.scrapingSince && s.scrapingSince === pollStatus.runSince;
+    if (found > 0 && (!sameRun || found > pollStatus.found)) {
+      load();
+      checkNewJobs();
+    }
+    pollStatus.runSince = s.scrapingSince;
+    pollStatus.found = found;
+
+    const finished = s.lastRun?.finished_at ? `${s.lastRun.id}:${s.lastRun.finished_at}` : null;
+    if (pollStatus.finished !== undefined && finished && finished !== pollStatus.finished) {
+      load();
+      if (s.lastRun.inserted > 0) loadFacets();
+      checkNewJobs();
+    }
+    pollStatus.finished = finished;
   } catch { /* server restarting */ }
 }
 
@@ -1847,6 +2051,9 @@ async function startApp() {
   $('#accountLabel').textContent = me.name || me.email.split('@')[0];
   // Neither needs the other, so the list does not wait behind the filters.
   await Promise.all([loadFacets(), load()]);
+  alertsOn = readAlertPref();
+  if (alertsOn) await resetAlertCursor();
+  paintAlertsBtn();
   pollStatus();
   clearInterval(statusTimer);
   statusTimer = setInterval(pollStatus, 5000);

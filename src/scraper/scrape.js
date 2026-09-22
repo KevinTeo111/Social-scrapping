@@ -262,7 +262,13 @@ async function runScrape({
   // Every progress event is mirrored into the module-level snapshot that
   // /api/status reads, then passed on to whatever the caller wanted to do.
   const onProgress = (info) => {
-    progress = { ...info, userId, startedAt, pagesTarget: pages };
+    /*
+     * `newJobs` rides along on every update, not only the list-page ones, so
+     * whoever reads progress at any moment can tell that new postings have
+     * landed -- they are in the database as soon as their list page is read,
+     * minutes before the run's detail and contact work is done.
+     */
+    progress = { ...info, newJobs: stats.inserted, userId, startedAt, pagesTarget: pages };
     report(info);
   };
   onProgress({ phase: 'starting' });

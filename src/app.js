@@ -516,6 +516,12 @@ function buildQuery(q, userId) {
     params.push(q.clientId);
   }
 
+  // Jobs first collected after this instant -- what the browser alert asks for.
+  if (q.seenAfter) {
+    where.push('j.first_seen_at > ?');
+    params.push(String(q.seenAfter));
+  }
+
   return { join, where: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
 }
 

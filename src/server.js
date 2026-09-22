@@ -102,9 +102,14 @@ async function banner() {
         `${config.detailConcurrency} detail / ${config.insightConcurrency} insight lane(s)`,
     );
     console.log(
+      config.sweepMinutes
+        ? `  New postings checked every ${config.sweepMinutes} min (SWEEP_MINUTES=0 to disable)`
+        : '  Quick check for new postings disabled',
+    );
+    console.log(
       config.autoScrapeMinutes
-        ? `  Auto-refresh every ${config.autoScrapeMinutes} min (AUTO_SCRAPE_MINUTES=0 to disable)`
-        : '  Auto-refresh disabled',
+        ? `  Full refresh every ${config.autoScrapeMinutes} min (AUTO_SCRAPE_MINUTES=0 to disable)`
+        : '  Full refresh disabled',
     );
   } else {
     console.log('  Scraper: not in this process (ROLE=web) — another process must run ROLE=worker');

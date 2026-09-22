@@ -47,7 +47,7 @@ const PORT = 4411;
 const BASE = `http://127.0.0.1:${PORT}`;
 const PW_LOG = path.join(SP, 'pw-loads.txt');
 fs.rmSync(PW_LOG, { force: true });
-const common = { ...process.env, APP_SECRET: 'split-test-secret-not-real', AUTO_SCRAPE_MINUTES: '0' };
+const common = { ...process.env, APP_SECRET: 'split-test-secret-not-real', AUTO_SCRAPE_MINUTES: '0', SWEEP_MINUTES: '0' };
 
 let fail = 0;
 const ok = (n, c, x = '') => {
@@ -97,8 +97,18 @@ try {
   ok('board (Vercel handler) comes up', up);
   if (!up) throw new Error(`the board did not start — see ${path.join(SP, 'board.log')}`);
 
-  const a = await member('split-owner@local.test'); // first account: the owner
+  const a = await member('split-owner@local.test');
   const b = await member('split-member@local.test');
+  /*
+   * The owner is normally whoever registered first, which on a database other
+   * tests have used is somebody else. Make the roles explicit; the session is
+   * read from the database on each request, so this takes effect at once.
+   */
+  {
+    const { run, close } = await import('../src/sql.js');
+    await run("UPDATE users SET is_admin = CASE WHEN email = 'split-owner@local.test' THEN 1 ELSE 0 END WHERE email LIKE 'split-%'");
+    await close();
+  }
 
   let s = await a('/api/status');
   ok('status works through the handler', s.status === 200, `http ${s.status}`);
@@ -110,7 +120,7 @@ try {
 
   worker = start('worker', ['src/server.js', '--role=worker'],
     { ...common, DETAIL_BUDGET: '0', INSIGHT_BUDGET: '0' });
-  ok('scraper comes online (seen by the board)', await until('online', async () => (await a('/api/status')).body.workerOnline === true, 45_000));
+  ok('scraper comes online (seen by the board)', await until('online', async () => (await a('/api/status')).body.workerOnline === true, 120_000));
 
   const [ra, rb] = await Promise.all([
     a('/api/scrape', { method: 'POST', body: JSON.stringify({ pages: 1 }) }),

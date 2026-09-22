@@ -71,7 +71,7 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL || '',
   dbPoolSize: num(process.env.DB_POOL_SIZE, 8),
   /** Client-side limit on any one query; see the pool in src/sql.js. */
-  dbQueryTimeoutMs: num(process.env.DB_QUERY_TIMEOUT_MS, 60_000),
+  dbQueryTimeoutMs: num(process.env.DB_QUERY_TIMEOUT_MS, 30_000),
   dbFile: process.env.DB_FILE || path.join(rootDir, 'data', 'workana.db'),
   storageState: path.join(rootDir, 'data', 'storage-state.json'),
   debugDir: path.join(rootDir, 'data', 'debug'),
@@ -202,6 +202,16 @@ export const config = {
 
   /** Background refresh loop in the server. 0 disables it. */
   autoScrapeMinutes: num(process.env.AUTO_SCRAPE_MINUTES, 10),
+  /**
+   * The quick check for new postings: the newest SWEEP_PAGES list pages, the
+   * details of any job on them not seen before, and nothing else. New postings
+   * always land on page 1, so this is what decides how soon one reaches the
+   * board -- the full refresh above, with its backlog work, is too slow and too
+   * heavy to run this often. Timed from when the previous check *started*, so
+   * the interval is the real gap. 0 disables it; fractions are allowed.
+   */
+  sweepMinutes: num(process.env.SWEEP_MINUTES, 2),
+  sweepPages: num(process.env.SWEEP_PAGES, 1),
   /**
    * Pages the *background* refresh walks. New postings land on page 1, so a
    * shallow sweep catches them; re-walking all 40 pages every ten minutes would

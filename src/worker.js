@@ -30,6 +30,8 @@ import * as control from './control.js';
 const TICK_MS = 3_000;
 /** When the schedule falls due while a member's run holds the slot. */
 const BUSY_RETRY_MS = 60_000;
+/** The same for the quick check, which is only worth anything when it is prompt. */
+const SWEEP_BUSY_RETRY_MS = 15_000;
 const PURGE_MS = 6 * 3600e3;
 /** One-off tasks each open their own browser, so only a couple at a time. */
 const MAX_TASKS = 2;
@@ -37,6 +39,7 @@ const MAX_TASKS = 2;
 export function startWorker({ log = console } = {}) {
   const workerId = `${os.hostname()}#${process.pid}-${crypto.randomBytes(3).toString('hex')}`;
   const interval = config.autoScrapeMinutes * 60_000;
+  const sweepInterval = config.sweepMinutes * 60_000;
 
   let current = null; // the run this process is working on: { token, promise, lost, stopping }
   let tasksInFlight = 0;
@@ -56,17 +59,23 @@ export function startWorker({ log = console } = {}) {
     }
 
     lastBeat = Date.now();
+    const sweep = options.kind === 'sweep';
     const run = { token, lost: false, stopping: false };
     current = run;
-    log.log(`[worker] ${trigger} run started (${options.pages ?? config.refreshPages} page(s))`);
+    // A quick check every couple of minutes would drown the log; it speaks only
+    // when it finds something.
+    if (!sweep) log.log(`[worker] ${trigger} run started (${options.pages ?? config.refreshPages} page(s))`);
 
     run.promise = (async () => {
       let error = null;
       try {
         const cookies = await getWorkanaCookies(userId);
         if (!cookies) throw new Error('That member has no Workana session stored.');
-        await scrape({ ...options, userId, cookies, proxy: await getWorkanaProxy(userId), trigger });
+        const stats = await scrape({ ...options, userId, cookies, proxy: await getWorkanaProxy(userId), trigger });
         if (trigger === 'manual') await recordCookieCheck(userId, { valid: true });
+        if (sweep && stats?.inserted) {
+          log.log(`[worker] quick check: ${stats.inserted} new posting(s) at ${new Date().toLocaleTimeString()}`);
+        }
       } catch (err) {
         // A thrown run is a failure worth showing; a stopped one returns normally.
         error = err.message;
@@ -74,40 +83,78 @@ export function startWorker({ log = console } = {}) {
       } finally {
         // A run that lost its slot must not write over the one that replaced it;
         // finishRun only touches the row while it still carries this token.
-        await control.finishRun(token, { error }).catch((err) => log.error('[worker] finish:', err.message));
+        // A quick check must not book the full run: see finishRun().
+        await control
+          .finishRun(token, { error, bookNext: !sweep })
+          .catch((err) => log.error('[worker] finish:', err.message));
         if (current === run) current = null;
-        log.log('[worker] run finished');
+        if (!sweep) log.log('[worker] run finished');
       }
     })();
   }
 
-  /** The schedule: take the slot for the clock when it falls due and nobody holds it. */
+  /**
+   * The schedule, two clocks:
+   *
+   *   the quick check -- page 1, and details for jobs not seen before -- every
+   *   SWEEP_MINUTES, timed from when the previous one *started*. New postings
+   *   land on page 1, so this decides how soon one reaches the board.
+   *
+   *   the full refresh -- REFRESH_PAGES pages plus backlog enrichment -- every
+   *   AUTO_SCRAPE_MINUTES after the previous one finished. It is the slow,
+   *   thorough work and has no reason to hurry.
+   *
+   * When both are due the full refresh runs: it reads page 1 as well, so it
+   * does the quick check's job too.
+   */
   async function maybeScheduled(c) {
-    if (c.paused || !config.autoScrapeMinutes) return;
+    if (c.paused) return;
+    const fullOn = config.autoScrapeMinutes > 0;
+    const sweepOn = config.sweepMinutes > 0;
+    if (!fullOn && !sweepOn) return;
+
     const now = Date.now();
-    if (!c.next_run_at) {
-      // First start, or just resumed without a time: wait one interval, as the
-      // server always did, rather than scraping the instant it boots.
+    const nowIso = control.iso(now);
+
+    // First start, or just resumed: wait one interval rather than scraping the
+    // instant the process boots.
+    if (fullOn && !c.next_run_at) {
       await control.setNextRunAt(now + interval);
       return;
     }
-    if (c.next_run_at > control.iso(now)) return;
+    if (sweepOn && !c.next_sweep_at) {
+      await control.setNextSweepAt(now + sweepInterval);
+      return;
+    }
+
+    const fullDue = fullOn && c.next_run_at <= nowIso;
+    const sweepDue = sweepOn && c.next_sweep_at <= nowIso;
+    if (!fullDue && !sweepDue) return;
 
     // Take turns between members so one account does not carry every refresh,
     // and so a member whose cookies expired does not stall the rotation.
     const [candidate] = await scrapeCandidates();
     if (!candidate) {
-      await control.setNextRunAt(now + interval);
+      if (fullDue) await control.setNextRunAt(now + interval);
+      if (sweepDue) await control.setNextSweepAt(now + sweepInterval);
       return;
     }
-    const options = { pages: config.refreshPages };
+
+    const options = fullDue
+      ? { kind: 'full', pages: config.refreshPages }
+      : // Details only for jobs this check listed (in practice the new ones);
+        // contact counts need bids first and come with the full refresh.
+        { kind: 'sweep', pages: config.sweepPages, onlyListed: true, insightBudget: 0 };
     const token = await control.claimSlot({ userId: candidate.id, trigger: 'auto', options, state: 'running' });
     if (!token) {
       // Somebody pressed Refresh a moment ago. Their run does the same work;
       // come back after it rather than competing.
-      await control.setNextRunAt(now + BUSY_RETRY_MS);
+      if (fullDue) await control.setNextRunAt(now + BUSY_RETRY_MS);
+      if (sweepDue) await control.setNextSweepAt(now + SWEEP_BUSY_RETRY_MS);
       return;
     }
+    // Booked from the start, so SWEEP_MINUTES is the real gap between checks.
+    if (sweepOn) await control.setNextSweepAt(now + sweepInterval);
     begin({ holder_user_id: candidate.id, run_trigger: 'auto', options: JSON.stringify(options) }, token);
   }
 
@@ -150,7 +197,7 @@ export function startWorker({ log = console } = {}) {
 
   async function tick() {
     // Saying "alive" and reading the slot are one round trip.
-    let c = await control.markWorkerSeen(workerId, config.autoScrapeMinutes);
+    let c = await control.markWorkerSeen(workerId, config.autoScrapeMinutes, config.sweepMinutes);
 
     if (current) {
       if (Date.now() - lastBeat >= control.HEARTBEAT_MS) {

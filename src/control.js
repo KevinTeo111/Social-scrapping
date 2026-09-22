@@ -25,7 +25,7 @@
  * scraper; only the scraper imports Playwright.
  */
 import crypto from 'node:crypto';
-import { all, get, run, insertReturning } from './sql.js';
+import { all, get, run, insertReturning, isPostgres } from './sql.js';
 import { config } from './config.js';
 
 export const iso = (ms = Date.now()) => new Date(ms).toISOString();
@@ -120,8 +120,21 @@ export async function renewLease(token, progress) {
   );
 }
 
-/** Hands the slot back and books the next automatic run. */
-export async function finishRun(token, { error = null, autoMinutes = config.autoScrapeMinutes } = {}) {
+/**
+ * Hands the slot back and, unless `bookNext` is false, books the next full
+ * automatic run.
+ *
+ * The quick check for new postings passes false. It runs every couple of
+ * minutes, and if each one booked the full run "an interval from now", the full
+ * run would be pushed back forever and never happen.
+ */
+export async function finishRun(token, { error = null, autoMinutes = config.autoScrapeMinutes, bookNext = true } = {}) {
+  if (!bookNext) {
+    return run(`UPDATE scrape_control SET ${IDLE_COLUMNS}, last_error = ? WHERE id = 1 AND run_token = ?`, [
+      error,
+      token,
+    ]);
+  }
   const next = autoMinutes ? iso(Date.now() + autoMinutes * 60_000) : null;
   return run(
     `UPDATE scrape_control
@@ -130,6 +143,10 @@ export async function finishRun(token, { error = null, autoMinutes = config.auto
       WHERE id = 1 AND run_token = ?`,
     [error, next, token],
   );
+}
+
+export async function setNextSweepAt(ms) {
+  return run('UPDATE scrape_control SET next_sweep_at = ? WHERE id = 1', [ms == null ? null : iso(ms)]);
 }
 
 /** Frees a slot whose holder stopped reporting. Returns rows changed (0 or 1). */
@@ -152,11 +169,20 @@ export async function clearStale() {
  * Also records its schedule, so the board shows the interval the scraper is
  * actually using rather than whatever the board's own environment says.
  */
-export async function markWorkerSeen(workerId, autoMinutes) {
+export async function markWorkerSeen(workerId, autoMinutes, sweepMinutes = null) {
+  /*
+   * auto_minutes is an integer column. This statement runs on every tick and
+   * everything the scraper does waits behind it, so a value it cannot store --
+   * AUTO_SCRAPE_MINUTES=0.75 did exactly that -- would stop the scraper cold.
+   * The column only feeds what the board displays and resume() books; whole
+   * minutes are plenty for both.
+   */
+  const whole = autoMinutes == null ? null : Math.max(0, Math.round(Number(autoMinutes)) || 0);
+  const sweep = sweepMinutes == null || !Number.isFinite(Number(sweepMinutes)) ? null : Number(sweepMinutes);
   return get(
-    `UPDATE scrape_control SET worker_id = ?, worker_seen_at = ?, auto_minutes = ?
+    `UPDATE scrape_control SET worker_id = ?, worker_seen_at = ?, auto_minutes = ?, sweep_minutes = ?
       WHERE id = 1 RETURNING *`,
-    [workerId, iso(), autoMinutes],
+    [workerId, iso(), whole, sweep],
   );
 }
 
@@ -182,7 +208,7 @@ export async function requestStop() {
   const wasActive = c.state !== 'idle';
   const direct = c.state === 'requested' || !workerOnline(c) || !slotHeld(c);
   await run(
-    `UPDATE scrape_control SET paused = 1, next_run_at = NULL,
+    `UPDATE scrape_control SET paused = 1, next_run_at = NULL, next_sweep_at = NULL,
             stop_requested = CASE WHEN state = 'running' THEN 1 ELSE 0 END
       WHERE id = 1`,
   );
@@ -201,14 +227,16 @@ export async function resume() {
 /** What /api/status says about scraping, for one viewer. */
 export function describeSlot(c, viewerId, now = Date.now()) {
   const held = slotHeld(c, now);
-  let progress = null;
-  if (held && c.progress) {
+  const parse = (text) => {
     try {
-      progress = JSON.parse(c.progress);
+      return text ? JSON.parse(text) : null;
     } catch {
-      progress = null;
+      return null;
     }
-  }
+  };
+  const progress = held ? parse(c.progress) : null;
+  // 'sweep' (the quick check for new postings) or 'full'; null for a button press.
+  const kind = held ? (parse(c.options)?.kind ?? null) : null;
   return {
     workerOnline: workerOnline(c, now),
     scraping: held,
@@ -218,6 +246,7 @@ export function describeSlot(c, viewerId, now = Date.now()) {
      * run a person actually asked for is anybody's.
      */
     scrapingAuto: held && c.run_trigger === 'auto',
+    scrapingKind: kind,
     scrapingMine: held && c.run_trigger === 'manual' && Number(c.holder_user_id) === Number(viewerId),
     // When it started, but never whose run it is.
     scrapingSince: held ? c.started_at : null,
@@ -228,6 +257,8 @@ export function describeSlot(c, viewerId, now = Date.now()) {
     lastError: c.last_error ?? null,
     autoScrapeMinutes: c.auto_minutes ?? config.autoScrapeMinutes,
     nextRunAt: c.paused ? null : (c.next_run_at ?? null),
+    sweepMinutes: c.sweep_minutes == null ? null : Number(c.sweep_minutes),
+    nextSweepAt: c.paused ? null : (c.next_sweep_at ?? null),
   };
 }
 
@@ -262,13 +293,21 @@ export async function waitForTask(id, timeoutMs) {
   }
 }
 
-/** Takes the oldest waiting task, if any. Atomic for the same reason claimSlot is. */
+/**
+ * Takes the oldest waiting task, if any. Atomic for the same reason claimSlot is.
+ *
+ * On Postgres the inner SELECT skips rows another claimer has already locked.
+ * Without that, simultaneous claimers all pick the same oldest task, one wins,
+ * and the rest come back empty-handed although tasks are waiting. Never a
+ * double claim, but slower pickup than there should be. SQLite runs writers
+ * one at a time, so it neither needs nor supports the clause.
+ */
 export async function claimTask(workerId) {
   return get(
     `UPDATE worker_tasks SET status = 'running', worker_id = ?
       WHERE id = (SELECT id FROM worker_tasks
                    WHERE status = 'pending' AND created_at >= ?
-                   ORDER BY id LIMIT 1)
+                   ORDER BY id LIMIT 1${isPostgres ? ' FOR UPDATE SKIP LOCKED' : ''})
         AND status = 'pending'
       RETURNING *`,
     [workerId, iso(Date.now() - TASK_PICKUP_MS)],
