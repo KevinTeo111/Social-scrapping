@@ -626,7 +626,13 @@ async function openDrawer(slug, tr) {
     const btn = drawer.querySelector('[data-insights]');
     if (btn) { btn.disabled = true; btn.textContent = 'Fetching contacts…'; }
     try {
-      await fetch(`/api/insights/${slug}`, { method: 'POST' });
+      const got = await requestInsights(slug);
+      if (!got.ok) {
+        // Quietly: this runs on every open, and a toast each time the scraper
+        // is offline would be noise. The button says why instead.
+        if (btn) { btn.disabled = false; btn.textContent = '⚡ Fetch contacts'; btn.title = got.message; }
+        return;
+      }
       data = await (await fetch(`/api/jobs/${slug}`)).json();
       drawer.innerHTML = drawerHtml(data);
       wireDrawer(drawer, data);
@@ -635,6 +641,20 @@ async function openDrawer(slug, tr) {
       if (btn) { btn.disabled = false; btn.textContent = '⚡ Fetch contacts'; }
     }
   }
+}
+
+/**
+ * Asks the scraper's machine for one job's insights.
+ *
+ * The board has no browser of its own, so the answer can be a refusal (the
+ * scraper is offline) or "still working" (202) as well as success. Reporting
+ * "Contacts updated" whatever came back used to hide both.
+ */
+async function requestInsights(slug) {
+  const res = await fetch(`/api/insights/${slug}`, { method: 'POST' });
+  if (res.ok && res.status !== 202) return { ok: true };
+  const body = await res.json().catch(() => ({}));
+  return { ok: false, message: body.error || `Could not fetch contacts (${res.status})` };
 }
 
 function closeDrawer() {
@@ -988,7 +1008,13 @@ function wireDrawer(drawer, data) {
     btn.disabled = true;
     btn.textContent = 'Fetching…';
     try {
-      await fetch(`/api/insights/${job.slug}`, { method: 'POST' });
+      const got = await requestInsights(job.slug);
+      if (!got.ok) {
+        toast(got.message);
+        btn.disabled = false;
+        btn.textContent = '⚡ Refresh contacts';
+        return;
+      }
       const fresh = await (await fetch(`/api/jobs/${job.slug}`)).json();
       drawer.innerHTML = drawerHtml(fresh);
       wireDrawer(drawer, fresh);
@@ -1246,7 +1272,18 @@ async function pollStatus() {
     const dot = $('#statusDot');
     const text = $('#statusText');
 
-    if (s.stalled) {
+    if (s.workerOnline === false) {
+      /*
+       * The board and the scraper can run on different machines now, and the
+       * scraper's may simply be switched off. That is not an error in the board
+       * and nothing here can fix it, so say plainly what is missing.
+       */
+      dot.className = 'status-dot error';
+      text.textContent = 'Scraper offline';
+      text.title =
+        'The computer that runs the scraper is not connected. The board still works; ' +
+        'new postings arrive once it is back.';
+    } else if (s.stalled) {
       /*
        * Holding the slot but past its deadline. Saying "Scraping" here is how a
        * board ends up lit up over nothing for hours, so say what is true: it
@@ -1302,12 +1339,13 @@ async function pollStatus() {
     // `scrapeRequested` covers the gap between the click and the server
     // claiming the slot: without it a poll landing in those few milliseconds
     // would see scraping:false and hand the button straight back.
-    const lock = Boolean(s.scraping) || scrapeRequested;
+    const offline = s.workerOnline === false;
+    const lock = Boolean(s.scraping) || scrapeRequested || offline;
     for (const [id, idle] of [['#refreshBtn', REFRESH_TIP], ['#fullCrawlBtn', CRAWL_TIP]]) {
       const btn = $(id);
       if (!btn) continue;
       btn.disabled = lock;
-      btn.title = whyBusy || idle;
+      btn.title = offline ? 'The scraper is offline, so nothing can pick up a new run.' : whyBusy || idle;
     }
 
     /*
@@ -1729,6 +1767,13 @@ function openAccount() {
     e.target.textContent = 'Checking…';
     try {
       const r = await api('/api/session/verify', { method: 'POST' });
+      // 202: the scraper's machine is still checking. Not a verdict either way.
+      if (r.pending) {
+        say(r.error, true);
+        e.target.disabled = false;
+        e.target.textContent = 'Verify';
+        return;
+      }
       await refreshMe();
       openAccount();
       say(r.loggedIn ? `Signed in to Workana as ${r.user || 'your account'}.` : 'Workana did not accept those cookies.', !r.loggedIn);

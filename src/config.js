@@ -70,6 +70,8 @@ export const config = {
    */
   databaseUrl: process.env.DATABASE_URL || '',
   dbPoolSize: num(process.env.DB_POOL_SIZE, 8),
+  /** Client-side limit on any one query; see the pool in src/sql.js. */
+  dbQueryTimeoutMs: num(process.env.DB_QUERY_TIMEOUT_MS, 60_000),
   dbFile: process.env.DB_FILE || path.join(rootDir, 'data', 'workana.db'),
   storageState: path.join(rootDir, 'data', 'storage-state.json'),
   debugDir: path.join(rootDir, 'data', 'debug'),

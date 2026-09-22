@@ -13,7 +13,8 @@
     "login-check": "node src/cli/login-check.js",
     "verify": "node scripts/verify.mjs",
     "shot": "node scripts/shot.mjs",
-    "postinstall": "playwright install chromium"
+    "worker": "node src/server.js --role=worker",
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",

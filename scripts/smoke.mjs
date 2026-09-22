@@ -163,6 +163,15 @@ await check('scrape candidates', () =>
         ORDER BY COALESCE(
           (SELECT MAX(started_at) FROM scrape_runs WHERE scrape_runs.user_id = users.id), '') ASC`),
 );
+// The scrape slot and task queue the board and the scraper share. A board on
+// Vercel only connects -- it never creates these -- so their absence here is
+// exactly the failure a hosted board would hit.
+await check('control: scrape slot', () =>
+  get(`SELECT state, paused, worker_seen_at IS NOT NULL AS worker_seen FROM scrape_control WHERE id = 1`),
+);
+await check('control: task queue', () =>
+  get(`SELECT COUNT(*) AS open FROM worker_tasks WHERE status IN ('pending', 'running')`),
+);
 await check('accounts', () =>
   all(`SELECT id, email,
               CASE WHEN workana_cookies IS NULL THEN 0 ELSE 1 END AS has_session,

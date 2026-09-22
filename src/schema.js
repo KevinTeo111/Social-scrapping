@@ -245,6 +245,50 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
   error       ${T.text}
 );
 
+-- The single scrape slot, shared by every process that serves the board and
+-- the one that scrapes. One row, id 1. It used to be variables in the server's
+-- memory, which only worked while one process did both jobs; with the board on
+-- Vercel and the scraper on a workstation, the database is the only thing
+-- both can see. See src/control.js.
+CREATE TABLE IF NOT EXISTS scrape_control (
+  id             ${T.int} PRIMARY KEY,
+  -- idle | requested (a member pressed Refresh, not yet picked up) | running
+  state          ${T.text} NOT NULL DEFAULT 'idle',
+  run_token      ${T.text},
+  holder_user_id ${T.int},
+  -- manual (a button press) | auto (the scheduler)
+  run_trigger    ${T.text},
+  options        ${T.json},
+  started_at     ${T.text},
+  -- Renewed by the scraper while it works. Once it lapses the slot is free,
+  -- which is how a scraper that died mid-run stops locking everyone out.
+  lease_until    ${T.text},
+  stop_requested ${T.int} NOT NULL DEFAULT 0,
+  paused         ${T.int} NOT NULL DEFAULT 0,
+  progress       ${T.json},
+  last_error     ${T.text},
+  next_run_at    ${T.text},
+  auto_minutes   ${T.int},
+  worker_id      ${T.text},
+  worker_seen_at ${T.text}
+);
+
+-- Work only the scraper's machine can do -- checking a Workana login, reading
+-- one job's insights -- asked for by a board that has no browser of its own.
+CREATE TABLE IF NOT EXISTS worker_tasks (
+  id          ${T.id},
+  kind        ${T.text} NOT NULL,
+  user_id     ${T.int},
+  payload     ${T.json},
+  status      ${T.text} NOT NULL DEFAULT 'pending',
+  result      ${T.json},
+  error       ${T.text},
+  worker_id   ${T.text},
+  created_at  ${T.text} NOT NULL,
+  finished_at ${T.text}
+);
+
+CREATE INDEX IF NOT EXISTS idx_worker_tasks_status ON worker_tasks(status, id);
 CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_published  ON jobs(published_approx_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_category   ON jobs(category_slug);

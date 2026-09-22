@@ -217,46 +217,60 @@ clear text. Prefer **Tailscale** (invited devices only, valid certificate, no fi
 changes) or **Cloudflare Tunnel** (public hostname, no inbound ports). Reserve `hosts`/mDNS
 for a LAN you already trust.
 
-### Hosting it on Railway
+### Hosting the board on Vercel, scraping from your own computer
 
-`Dockerfile` and `railway.toml` are ready to deploy. Railway solves access outright — a
-public HTTPS URL, no tunnel, and the board stops depending on one desktop being awake.
+The board and the scraper are two halves that share nothing but the database:
 
-Set these service variables:
+| Half | Runs on | Needs a browser |
+| --- | --- | --- |
+| **Board** — pages, API, sign-in | Vercel (`api/index.js` serves `/api/*`, the CDN serves `public/`) | no |
+| **Scraper** — scheduled refresh, Refresh / Full crawl, login checks, insights | a computer with a home connection: `run.cmd worker` | yes |
+| **Database** | Postgres (Neon) | — |
+
+The split exists because the scraper cannot live on Vercel: a run takes minutes, Chromium is
+larger than a serverless function may be, and Cloudflare challenges datacenter IPs that a home
+connection with a real browser passes. So the board writes what it wants into the database —
+"a member pressed Refresh", "check this login" — and the scraper picks it up within seconds.
+One scrape at a time is still the rule, now enforced by a row in `scrape_control` that only
+one request can claim, however many board instances Vercel runs (see `src/control.js`).
+
+When the scraper's computer is off, the board keeps working on what it has and says
+**Scraper offline**; Refresh and Full crawl are disabled rather than queued.
+
+**1. Database.** Create a Neon project. On the scraper's computer put its *direct* connection
+string (the host without `-pooler`) in `data\local.env` as `DATABASE_URL=…`, and start the
+scraper once — it creates and updates the schema. The board on Vercel only connects; it never
+migrates, so the scraper must have run against a database before the board can use it.
+
+**2. Vercel.** Import the repository. `vercel.json` already sets the framework to *Other*, the
+output directory to `public`, and routes `/api/*` to the function. Set these environment
+variables:
 
 | Variable | Value |
 | --- | --- |
-| `APP_SECRET` | a long random string **you keep a copy of** |
-| `HOST` | `0.0.0.0` (already the default inside the image) |
-| `ALLOWED_HOSTS` | your Railway domain, e.g. `workana-board.up.railway.app` |
-| `TRUST_PROXY` | `1` — Railway terminates TLS, so this is what makes cookies `Secure` |
+| `DATABASE_URL` | Neon's **pooled** connection string (host contains `-pooler`) — many short-lived instances each opening connections is what the pooler is for |
+| `APP_SECRET` | **exactly** the key the scraper uses. If the scraper has no `APP_SECRET`, its key is the contents of `data\secret.key` — use that, and add the same `APP_SECRET=` line to `data\local.env` so it no longer depends on the file |
+| `TRUST_PROXY` | `1` — Vercel terminates TLS, so this is what makes the session cookie `Secure` |
 | `REGISTRATION_CODE` | an invite code; the URL is public |
-| `DB_FILE` | `/app/data/workana.db` |
+| `DB_POOL_SIZE` | `3` |
 
-**Mount a Railway Volume at `/app/data`** (Service → Variables → *Add Volume*). It has to be
-attached in the dashboard: Railway rejects a `VOLUME` instruction in the Dockerfile, so the
-image cannot declare it for you. Container filesystems are wiped on redeploy, and that
-directory holds the job corpus, `secret.key`, and each member's earned Cloudflare clearance.
-Without the volume they vanish on the next deploy; without `APP_SECRET` set explicitly, a
-replaced volume makes every stored Workana session permanently undecryptable. The app warns
-about both at startup when it detects a hosted environment.
+A mismatched `APP_SECRET` is the one mistake that fails quietly: the board starts, but no
+member's stored Workana session can be read. Vercel's default function region (Washington,
+D.C.) sits next to a Neon database in `us-east`.
 
-`PORT` is injected by Railway and already honoured. `/healthz` is unauthenticated for the
-platform's health check and returns nothing but `{"ok":true}`.
+The Chromium download is skipped during Vercel builds (`scripts/postinstall.mjs`), since the
+board never starts a browser.
 
-**The catch worth weighing before you commit.** Railway egresses from datacenter IP ranges,
-and Cloudflare scores those far more harshly than residential ones. This scraper only works
-because a real Chromium can pass the managed challenge — which it did from a residential
-connection, and even then the headless *shell* was being challenged until it was swapped for
-full Chromium. From a cloud IP expect frequent challenges and possible hard blocks, with one
-fewer escape hatch: `HEADLESS=false` is not available without a virtual display.
+**3. Scraper.** `run.cmd worker` scrapes only; `run.cmd start` also serves the board locally
+at `127.0.0.1:4300`, which is handy and harmless — both boards read the same database. Leave
+it running. Ctrl+C hands the slot back at once; a computer that is simply switched off is
+noticed within a minute, and a run it was in the middle of is freed within a minute and a
+half.
 
-That is survivable, and the per-member proxy is what makes it so: if every member sets an
-exit in their own region, Workana never sees Railway's address at all, and the container
-becomes a coordinator rather than the source of the traffic. **Railway plus per-member
-proxies works well; Railway on its own is likely to get throttled.** If nobody has a proxy,
-keeping the scraper on a residential connection and tunnelling the UI out is the more
-reliable shape.
+**Other hosts.** `Dockerfile` still runs board and scraper together in one container
+(`src/server.js`, `ROLE=all`), for any host that keeps a process running. Expect the same
+datacenter-IP trouble with Cloudflare there unless members set a proxy in their own region —
+see below.
 
 ### Developers in other regions
 
@@ -312,6 +326,11 @@ All optional, via environment variables:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` / `HOST` | `4300` / `127.0.0.1` | Web server binding |
+| `ROLE` | `all` | `all` serves the board and runs the scraper; `worker` scrapes only (board on Vercel); `web` serves only. `--role=` on the command line does the same |
+| `DATABASE_URL` | — | Postgres connection string. Unset means the SQLite file below. `run.cmd` reads it from `data\local.env` |
+| `DB_POOL_SIZE` | `8` | Postgres connections per process; `3` suits a serverless board |
+| `DB_QUERY_TIMEOUT_MS` | `60000` | Any one query that takes longer fails, so a stalled connection cannot freeze the scraper |
+| `SCRAPE_MAX_MINUTES` | `45` | A run holding the slot longer than this is abandoned, however healthy it looks |
 | `APP_SECRET` | auto-generated | Encrypts stored Workana sessions. Set it explicitly in any shared deployment; losing it makes every stored session unreadable |
 | `ALLOW_REGISTRATION` | `1` | `0` closes sign-ups (the first account can always be created) |
 | `REGISTRATION_CODE` | — | Require an invite code to register |
@@ -326,9 +345,9 @@ All optional, via environment variables:
 | `REFRESH_PAGES` | `5` | Pages the *background* refresh walks (new jobs land on page 1) |
 | `MAX_LIST_PAGES` | `250` | Safety cap for a full crawl, not a target |
 | `EMPTY_PAGE_RETRIES` | `2` | Retries before an empty page is accepted as the end |
-| `DETAIL_BUDGET` | `40` | Detail pages enriched per run |
-| `INSIGHT_BUDGET` | `25` | Project Insights pages per run — these supply contact counts |
-| `MIN_DELAY_MS` / `MAX_DELAY_MS` | `1200` / `2600` | Pacing between navigations |
+| `DETAIL_BUDGET` | `100` | Detail pages enriched per run |
+| `INSIGHT_BUDGET` | `60` | Project Insights pages per run — these supply contact counts |
+| `MIN_DELAY_MS` / `MAX_DELAY_MS` | `500` / `1200` | Pacing between navigations |
 | `WORKANA_PROXY` | — | Route through a proxy, e.g. one in your usual country |
 
 ## Crawling vs refreshing
@@ -366,11 +385,16 @@ the only place selectors appear.
 ## Layout
 
 ```
+api/
+  index.js             the board as a Vercel function (no browser)
 src/
   config.js            environment/config
   cookies.js           cookie export → Playwright cookies
   db.js                schema, upserts, FTS index, migrations
-  server.js            REST API + static hosting
+  app.js               the board: REST API + static hosting, never imports the scraper
+  control.js           the scrape slot and task queue, kept in the database
+  worker.js            the scraper process: runs, schedule, one-off browser tasks
+  server.js            local entry point: board and/or scraper (ROLE / --role)
   scraper/
     browser.js         Chromium launch, Cloudflare handling, clearance persistence
     parse.js           in-page extractors + Node-side normalisation
@@ -380,6 +404,9 @@ public/                the dashboard (no build step, no framework)
 scripts/               verify.mjs, inspect-db.mjs, shot.mjs diagnostics
                        backfill-posted.mjs, backfill-bids.mjs repairs
                        (both default to a dry run; pass --apply to write)
+                       test-control.mjs, test-split.mjs: the scrape slot, and the
+                       board-on-Vercel + separate scraper, end to end. Both refuse
+                       to run against a database whose name lacks "test"
 ```
 
 ## Scope

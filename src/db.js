@@ -27,12 +27,32 @@ async function hasColumn(table, column) {
   return cols.some((c) => c.name === column);
 }
 
+/** The scrape slot's single row. Every process reads it; none may find it missing. */
+async function ensureControlRow() {
+  await run(`INSERT INTO scrape_control (id, state) VALUES (1, 'idle') ON CONFLICT (id) DO NOTHING`);
+}
+
 /**
  * Brings the database up to date. Safe to run against an empty database, a
  * fully current one, or one that predates any of the columns added since.
+ *
+ * `migrate: false` only connects. That is what a serverless board wants: it
+ * starts cold on every scale-up, several instances can start at once, and
+ * concurrent `CREATE TABLE`/`ALTER TABLE` from each of them would race and cost
+ * a round trip per statement on every cold start. The long-running process that
+ * scrapes keeps the schema current instead.
  */
-export async function initDatabase() {
+export async function initDatabase({ migrate = true } = {}) {
   await connect();
+  if (!migrate) {
+    await ensureControlRow().catch((err) => {
+      throw new Error(
+        `${err.message} -- the schema is older than this code. Start the scraper ` +
+          '(run.cmd start) once against this database so it can bring the schema up to date.',
+      );
+    });
+    return;
+  }
   await exec(TABLES);
   await exec(SEARCH);
 
@@ -74,6 +94,8 @@ export async function initDatabase() {
       pg_get_serial_sequence('jobs', 'seq'),
       GREATEST((SELECT COALESCE(MAX(seq), 0) FROM jobs), 1))`).catch(() => {});
   }
+
+  await ensureControlRow();
 }
 
 /* ------------------------------------------------------------------ */

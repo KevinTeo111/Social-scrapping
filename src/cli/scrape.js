@@ -1,7 +1,8 @@
-import { scrape } from '../scraper/scrape.js';
+import { scrape, stopScraping, currentProgress } from '../scraper/scrape.js';
 import { config } from '../config.js';
 import { get, initDatabase } from '../db.js';
 import { findUserByEmail, getWorkanaCookies } from '../auth.js';
+import { claimSlot, renewLease, finishRun, readControl, describeSlot, HEARTBEAT_MS } from '../control.js';
 
 await initDatabase();
 
@@ -78,7 +79,52 @@ console.log('Scraping Workana:', {
   insightBudget: options.insightBudget,
 });
 
+/*
+ * The CLI takes the same slot as the board and the scraper process. It used to
+ * call the scraper directly, which was fine while nothing else scraped -- but a
+ * scraper running in the background (run.cmd start / worker) would then have a
+ * second browser on Workana beside it, the one thing the slot exists to prevent.
+ * It holds the slot like any run: renewing the lease while it works (a full
+ * crawl runs far past one lease), obeying Stop from the board, and handing the
+ * slot back however it ends.
+ */
+const token = await claimSlot({
+  userId: actor.userId,
+  trigger: 'manual',
+  options: { pages: options.pages, category: options.category, via: 'cli' },
+  state: 'running',
+});
+if (!token) {
+  const held = describeSlot(await readControl(), actor.userId);
+  console.error(
+    `\nA scrape is already running${held.scrapingSince ? ` (started ${held.scrapingSince})` : ''}.` +
+      '\nWait for it to finish, or stop it from the board, then try again.',
+  );
+  process.exit(1);
+}
+const beat = setInterval(async () => {
+  try {
+    const r = await renewLease(token, currentProgress());
+    if (!r) {
+      console.error('\n  The slot was taken over (this run stopped reporting in time) — stopping.');
+      await stopScraping();
+    } else if (r.stop_requested) {
+      console.log('\n  Stop requested from the board — stopping.');
+      await stopScraping();
+    }
+  } catch {
+    // A missed heartbeat is harmless; the lease outlasts several of them.
+  }
+}, HEARTBEAT_MS);
+process.once('SIGINT', async () => {
+  clearInterval(beat);
+  await stopScraping();
+  await finishRun(token, { error: 'Stopped from the command line.' }).catch(() => {});
+  process.exit(130);
+});
+
 const t0 = Date.now();
+let failure = null;
 try {
   const stats = await scrape(options);
   console.log(`\nDone in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
@@ -91,8 +137,12 @@ try {
     );
   }
 } catch (err) {
+  failure = err.message;
   console.error('\nScrape failed:', err.message);
   process.exitCode = 1;
+} finally {
+  clearInterval(beat);
+  await finishRun(token, { error: failure });
 }
 
 const row = await get(`SELECT

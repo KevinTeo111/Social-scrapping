@@ -17,6 +17,18 @@ const KEY_FILE = path.join(path.dirname(config.dbFile), 'secret.key');
 function loadKeyMaterial() {
   if (process.env.APP_SECRET) return process.env.APP_SECRET;
 
+  /*
+   * A serverless host has no disk to keep a generated key on -- the write below
+   * would fail with a bare EROFS -- and a key generated per instance could not
+   * read what the scraper wrote anyway. Say what is actually wrong.
+   */
+  if (process.env.VERCEL) {
+    throw new Error(
+      'APP_SECRET is not set. Add it in the Vercel project settings, with exactly the ' +
+        "value the scraper uses, or no member's stored Workana session can be read.",
+    );
+  }
+
   // No secret configured: keep a generated one beside the database so restarts
   // can still read what they wrote. Same-machine only — see README.
   fs.mkdirSync(path.dirname(KEY_FILE), { recursive: true });

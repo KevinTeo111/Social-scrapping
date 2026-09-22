@@ -96,6 +96,18 @@ async function openPostgres() {
      */
     connectionTimeoutMillis: 20_000,
     keepAlive: true,
+    // The OS default before the first keep-alive probe is two hours; a dead
+    // connection should be noticed in seconds.
+    keepAliveInitialDelayMillis: 10_000,
+    /*
+     * A query that stalls after the connection is up never fails on its own --
+     * it simply never answers. From a workstation to Neon that happens now and
+     * then, and in the scraper's loop one such query would freeze everything
+     * behind it for good. Timing it out turns the stall into an error: the pool
+     * throws the connection away and the next attempt gets a fresh one. Nothing
+     * this app runs legitimately takes anywhere near this long.
+     */
+    query_timeout: config.dbQueryTimeoutMs,
     // Railway terminates TLS with its own certificate chain.
     ssl: /\blocalhost\b|\b127\.0\.0\.1\b/.test(config.databaseUrl)
       ? false
@@ -147,12 +159,23 @@ async function openSqlite() {
   const db = new DatabaseSync(config.dbFile);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;');
 
+  /*
+   * A statement that hands back rows is read with all(); anything else goes
+   * through run(), the only one of the two that reports how many rows changed.
+   * Reading everything with all() made every plain UPDATE and DELETE report 0
+   * rows touched, so a caller that counted its effect on SQLite was always told
+   * nothing happened. `all()` covers RETURNING too, which is how both engines
+   * hand back a generated id.
+   */
+  const RETURNS_ROWS = /^\s*(SELECT|WITH|PRAGMA|VALUES|EXPLAIN)\b|\bRETURNING\b/i;
   const query = (sql, params = []) => {
-    const stmt = db.prepare(toSqlite(sql));
-    // `all()` works for statements with a RETURNING clause too, which is how
-    // both engines hand back a generated id.
-    const rows = stmt.all(...params);
-    return { rows, changes: rows.length };
+    const text = toSqlite(sql);
+    const stmt = db.prepare(text);
+    if (RETURNS_ROWS.test(text)) {
+      const rows = stmt.all(...params);
+      return { rows, changes: rows.length };
+    }
+    return { rows: [], changes: Number(stmt.run(...params).changes) };
   };
 
   const api = {

@@ -6,7 +6,8 @@ rem Restricted, which is the default on a plain Windows install and cannot be
 rem worked around from inside the script. A .cmd is not a "script" by that
 rem definition, so this runs regardless of the policy.
 rem
-rem   run.cmd                 start the web server
+rem   run.cmd                 start the board and the scraper together
+rem   run.cmd worker          start the scraper only (the board is on Vercel)
 rem   run.cmd scrape          run one scrape and exit
 rem   run.cmd login-check     verify the stored cookies still authenticate
 rem   run.cmd smoke           run every query against the configured database
@@ -45,7 +46,9 @@ set "TASK=%~1"
 if "%TASK%"=="" set "TASK=start"
 
 set "SCRIPT="
+set "ROLEARG="
 if /i "%TASK%"=="start"       set "SCRIPT=src\server.js"
+if /i "%TASK%"=="worker"      (set "SCRIPT=src\server.js" & set "ROLEARG= --role=worker")
 if /i "%TASK%"=="scrape"      set "SCRIPT=src\cli\scrape.js"
 if /i "%TASK%"=="login-check" set "SCRIPT=src\cli\login-check.js"
 if /i "%TASK%"=="verify"      set "SCRIPT=scripts\verify.mjs"
@@ -59,8 +62,8 @@ if /i "%TASK%"=="migrate"     set "SCRIPT=scripts\migrate-to-postgres.mjs"
 
 if "%SCRIPT%"=="" (
   echo Unknown task "%TASK%".
-  echo Tasks: start, scrape, login-check, verify, smoke, last-login, my-bids,
-  echo        clean-tests, reset, proposals, migrate
+  echo Tasks: start, worker, scrape, login-check, verify, smoke, last-login,
+  echo        my-bids, clean-tests, reset, proposals, migrate
   exit /b 1
 )
 
@@ -79,5 +82,5 @@ if /i "%TASK%"=="start" (
   echo   Starting Workana job board on http://127.0.0.1:4300
   echo.
 )
-"%NODE%" --env-file-if-exists="%ROOT%data\local.env" "%ROOT%%SCRIPT%"%ARGS%
+"%NODE%" --env-file-if-exists="%ROOT%data\local.env" "%ROOT%%SCRIPT%"%ROLEARG%%ARGS%
 exit /b %ERRORLEVEL%
