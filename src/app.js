@@ -40,6 +40,7 @@ import {
   getWorkanaCookies,
   clearWorkanaCookies,
   setWorkanaProxy,
+  proxyBlocker,
   requireAdmin,
 } from './auth.js';
 
@@ -301,6 +302,8 @@ async function viaWorker(req, res, kind, payload, notYet) {
   if (!(await getWorkanaCookies(req.user.id))) {
     return res.status(400).json({ error: 'Add your Workana session first.' });
   }
+  const needsProxy = proxyBlocker(req.user);
+  if (needsProxy) return res.status(403).json({ proxyRequired: true, error: needsProxy });
   if (!workerOnline(await readControl())) return res.status(503).json({ offline: true, error: OFFLINE });
 
   const id = await enqueueTask(kind, req.user.id, payload);
@@ -947,6 +950,12 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
   if (!(await getWorkanaCookies(req.user.id))) {
     return res.status(400).json({ error: 'Add your Workana session first, then refresh.' });
   }
+  /*
+   * Checked before the slot is claimed: a run that may not use this member's
+   * session should never hold the one slot, however briefly.
+   */
+  const needsProxy = proxyBlocker(req.user);
+  if (needsProxy) return res.status(403).json({ proxyRequired: true, error: needsProxy });
   if (!workerOnline(await readControl())) return res.status(503).json({ offline: true, error: OFFLINE });
 
   const { pages, category, query, detailBudget } = req.body || {};

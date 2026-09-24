@@ -422,6 +422,7 @@ All optional, via environment variables:
 | `APP_SECRET` | auto-generated | Encrypts stored Workana sessions. Set it explicitly in any shared deployment; losing it makes every stored session unreadable |
 | `ALLOW_REGISTRATION` | `1` | `0` closes sign-ups (the first account can always be created) |
 | `REGISTRATION_CODE` | — | Require an invite code to register |
+| `REQUIRE_PROXY` | `1` | A member must register an egress proxy before their Workana session is used — scraping, Verify, contact lookups and the background rotation all skip them until they do. The owner is exempt: the scraper runs on their machine |
 | `ALLOWED_HOSTS` | — | Comma-separated Host allowlist, e.g. `jobs.example.com`, or `*.trycloudflare.com` to match any subdomain. Empty accepts any host; set it whenever the server is reachable off-machine |
 | `BOARD_ORIGIN` | — | **Vercel only.** Set it and the deployment becomes a front door forwarding to the board at that URL (the tunnel). Unset, it serves the board itself against `DATABASE_URL` |
 | `TRUST_PROXY` | `0` | Believe `X-Forwarded-Proto`/`-For` and mark session cookies `Secure`. Only behind a proxy you control |
@@ -497,6 +498,8 @@ scripts/               verify.mjs, inspect-db.mjs, shot.mjs diagnostics
                        backup.mjs: compacted copy of the SQLite database
                        backfill-posted.mjs, backfill-bids.mjs repairs
                        (both default to a dry run; pass --apply to write)
+                       test-require-proxy.mjs: a member may not use their
+                       Workana session until they register a proxy
                        test-control.mjs, test-split.mjs: the scrape slot, and the
                        board-on-Vercel + separate scraper, end to end.
                        test-freshness.mjs: the quick-check schedule, the list

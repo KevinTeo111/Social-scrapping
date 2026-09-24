@@ -23,6 +23,8 @@ import {
   recordCookieCheck,
   scrapeCandidates,
   purgeExpiredSessions,
+  findUser,
+  proxyBlocker,
 } from './auth.js';
 import * as control from './control.js';
 
@@ -69,6 +71,10 @@ export function startWorker({ log = console } = {}) {
     run.promise = (async () => {
       let error = null;
       try {
+        // Checked here as well as at the board: whatever asked for this run,
+        // the session must not go out through the wrong address.
+        const blocked = proxyBlocker(await findUser(userId));
+        if (blocked) throw new Error(blocked);
         const cookies = await getWorkanaCookies(userId);
         if (!cookies) throw new Error('That member has no Workana session stored.');
         const stats = await scrape({ ...options, userId, cookies, proxy: await getWorkanaProxy(userId), trigger });
@@ -160,6 +166,8 @@ export function startWorker({ log = console } = {}) {
 
   async function runTask(t) {
     try {
+      const blocked = proxyBlocker(await findUser(t.user_id));
+      if (blocked) throw new Error(blocked);
       const cookies = await getWorkanaCookies(t.user_id);
       if (!cookies) throw new Error('No Workana session stored yet.');
       const proxy = await getWorkanaProxy(t.user_id);

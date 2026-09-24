@@ -1864,14 +1864,24 @@ function accountHtml() {
     </div>
     <p class="acct-help" id="cookieResult" hidden></p>
 
-    <h3 style="margin:22px 0 8px;font-size:13px">Your region <span style="font-weight:400;color:var(--text-mute)">(optional)</span></h3>
+    <h3 style="margin:22px 0 8px;font-size:13px">Your region
+      <span style="font-weight:400;color:${me.proxyRequired ? 'var(--red, #e5484d)' : 'var(--text-mute)'}">
+        ${me.proxyRequired ? '(required)' : '(optional)'}</span></h3>
     <p class="acct-help">
       Scraping runs on the server, so by default your Workana session is driven from
       <em>this machine's</em> IP rather than yours. If you are in another country, set an exit
       proxy in your own region — Workana ties its Cloudflare clearance to the IP that earned
       it, and a session that suddenly appears from elsewhere is what account-security checks
-      look for. Leave blank to use the server's connection.
+      look for.
     </p>
+    ${me.proxyRequired
+      ? `<p class="acct-help" style="color:var(--red, #e5484d)">
+           <strong>Your session is not being used yet.</strong> Until you set a proxy here,
+           Refresh, Verify and contact lookups are refused, and the background refresh skips
+           your account — so neither your Workana account nor this machine's gets challenged
+           for signing in from the wrong country.
+         </p>`
+      : '<p class="acct-help">Leave blank to use the server\'s connection.</p>'}
     <input class="f-control" id="proxyBox" placeholder="socks5://host:1080 or http://user:pass@host:8080"
            value="${esc(me.proxy || '')}">
     <div class="acct-actions" style="margin-top:8px">

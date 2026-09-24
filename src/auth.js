@@ -1,6 +1,7 @@
 import { all, get, run, insertReturning } from './sql.js';
 import { hashPassword, verifyPassword, newToken, encrypt, decrypt } from './secrets.js';
 import { parseWorkanaCookies } from './cookies.js';
+import { config } from './config.js';
 
 const SESSION_DAYS = 30;
 
@@ -280,6 +281,8 @@ export function publicUser(user) {
     proposalsTotal: user.proposals_total ?? null,
     proposalsSyncedAt: user.proposals_synced_at ?? null,
     proxy: user.workana_proxy ? describeProxy(decrypt(user.workana_proxy)) : null,
+    // So the board can say why scraping is refused before anyone presses it.
+    proxyRequired: Boolean(proxyBlocker(user)),
     createdAt: user.created_at,
   };
 }
@@ -289,9 +292,28 @@ export async function scrapeCandidates() {
   return all(
     `SELECT id FROM users
       WHERE workana_cookies IS NOT NULL AND COALESCE(cookies_valid, 1) = 1
+        ${config.requireProxy ? 'AND (is_admin = 1 OR workana_proxy IS NOT NULL)' : ''}
       ORDER BY COALESCE(
         (SELECT MAX(started_at) FROM scrape_runs WHERE scrape_runs.user_id = users.id), '')
       ASC`,
+  );
+}
+
+/**
+ * Why this member's Workana session may not be used yet, or null when it may.
+ *
+ * Their session would otherwise be driven from the scraper's own address --
+ * another country, as far as Workana is concerned -- which invites both
+ * Cloudflare challenges and questions about the account. The owner is exempt:
+ * the scraper runs on their machine, so their traffic is already their own.
+ */
+export function proxyBlocker(user) {
+  if (!config.requireProxy || !user || user.is_admin) return null;
+  if (user.workana_proxy) return null;
+  return (
+    'Add a proxy in your own country first (Account → Egress proxy). Without one, your ' +
+    'Workana session would be driven from the scraper machine\'s address, which gets both ' +
+    'of you challenged.'
   );
 }
 

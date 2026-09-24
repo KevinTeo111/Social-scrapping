@@ -88,6 +88,21 @@ export const config = {
   registrationCode: process.env.REGISTRATION_CODE || '',
 
   /**
+   * Whether a member must register an egress proxy before their Workana session
+   * is used.
+   *
+   * Scraping happens on one machine, so without this a member's session is
+   * driven from *that* machine's address: Workana sees their account signing in
+   * from a country they have never worked from, and Cloudflare -- which scores
+   * a shared or datacenter address harshly -- challenges the lot. Requiring a
+   * proxy keeps each member's traffic on their own exit.
+   *
+   * The owner is exempt: the scraper runs on their machine, so their session
+   * already goes out through their own connection.
+   */
+  requireProxy: bool(process.env.REQUIRE_PROXY, true),
+
+  /**
    * Virtual-domain support.
    *
    * `trustProxy` makes Express believe `X-Forwarded-Proto`/`X-Forwarded-For`, which
