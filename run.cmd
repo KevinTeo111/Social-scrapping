@@ -8,7 +8,7 @@ rem definition, so this runs regardless of the policy.
 rem
 rem   run.cmd                 start the board and the scraper together
 rem   run.cmd worker          start the scraper only (the board is on Vercel)
-rem   run.cmd tunnel          publish the board on an https URL (Cloudflare)
+rem   run.cmd tunnel          publish the board on an https URL, and keep it up
 rem   run.cmd scrape          run one scrape and exit
 rem   run.cmd login-check     verify the stored cookies still authenticate
 rem   run.cmd smoke           run every query against the configured database
@@ -54,20 +54,6 @@ rem Set before the block below: everything inside parentheses is expanded when
 rem the block is read, so a variable set in it would still look empty here.
 if "%PORT%"=="" set "PORT=4300"
 
-if /i "%TASK%"=="tunnel" (
-  if not exist "%ROOT%.tools\cloudflared.exe" (
-    echo cloudflared is not installed. Download it to .tools\cloudflared.exe from
-    echo https://github.com/cloudflare/cloudflared/releases/latest
-    exit /b 1
-  )
-  echo.
-  echo   Publishing http://127.0.0.1:%PORT% — the https URL appears below.
-  echo   Add it to ALLOWED_HOSTS in data\local.env, or keep *.trycloudflare.com there.
-  echo.
-  "%ROOT%.tools\cloudflared.exe" tunnel --no-autoupdate --url http://127.0.0.1:%PORT%
-  exit /b %ERRORLEVEL%
-)
-
 set "SCRIPT="
 set "ROLEARG="
 if /i "%TASK%"=="start"       set "SCRIPT=src\server.js"
@@ -83,6 +69,7 @@ if /i "%TASK%"=="reset"       set "SCRIPT=scripts\reset-database.mjs"
 if /i "%TASK%"=="proposals"   set "SCRIPT=scripts\sync-proposals.mjs"
 if /i "%TASK%"=="migrate"     set "SCRIPT=scripts\migrate-to-postgres.mjs"
 if /i "%TASK%"=="backup"      set "SCRIPT=scripts\backup.mjs"
+if /i "%TASK%"=="tunnel"      set "SCRIPT=scripts\tunnel.mjs"
 
 if "%SCRIPT%"=="" (
   echo Unknown task "%TASK%".

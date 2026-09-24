@@ -232,9 +232,28 @@ account, no database quota, nothing opened on the router — the board still lis
 
 ```
 run.cmd start      the board and the scraper (database: data\workana.db)
-run.cmd tunnel     publishes it, printing an https://….trycloudflare.com URL
+run.cmd tunnel     publishes it on an https URL, and keeps it published
 run.cmd backup     copies the database to data\backups (keep this habit)
 ```
+
+`run.cmd tunnel` is a keeper, not just a launcher. A quick tunnel is given a new hostname
+every start and does not always stay up — on a machine whose DNS goes through a VPN it fails
+as `lookup region1.v2.argotunnel.com: i/o timeout`, after which the hostname stops resolving
+and the board is quietly unreachable with nothing in its own logs to show for it. So the
+keeper checks every minute whether the tunnel actually answers from outside, restarts it when
+it does not, and writes the current address to `data\tunnel-url.txt`.
+
+Give it a Vercel token in `data\local.env` and it also repoints the front door, so a restart
+costs nobody a new link:
+
+```
+VERCEL_TOKEN=...          Vercel → Account Settings → Tokens
+VERCEL_PROJECT=workana-job-scrapping
+VERCEL_TEAM_ID=team_...   only if the project lives in a team
+```
+
+It then sets `BOARD_ORIGIN` and redeploys — a function only sees the value it was built with,
+so the redeploy is the part that matters.
 
 With the database local, a query takes under a millisecond instead of the ~340 ms a hosted
 one costs over a slow link: the board opens in **0.3 s** against 1.5 s on hosted Postgres.
