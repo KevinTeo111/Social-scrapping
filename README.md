@@ -257,6 +257,34 @@ domain needed). And the board is only up **while the machine is on**, which also
 database is the only copy of the corpus and every member's session: `run.cmd backup` writes a
 compacted copy with SQLite's `VACUUM INTO`, but keep one off this disk as well.
 
+### A permanent address: Vercel as a front door
+
+A quick tunnel is given a new hostname every time it starts, which is fine for one person and
+tiresome for a team. Vercel can hold the permanent address instead and forward to whatever
+the tunnel's address is today: teammates always open `your-board.vercel.app`, and when the
+tunnel changes, one setting changes.
+
+Set **`BOARD_ORIGIN`** in the Vercel project to the tunnel URL, and `api/index.js` switches
+from serving the board itself to forwarding to it. It carries the method, path, headers,
+cookies and body across, tells the board the request arrived over HTTPS (so the session
+cookie is still marked `Secure`), and answers **502 with a plain explanation** when the
+machine is off, rather than hanging.
+
+Two things follow from how Vercel routes:
+
+- Files that exist in `public/` — the page, `app.js`, `styles.css` — are served from Vercel's
+  CDN, and only `/api/*` and `/healthz` travel to your PC. Keep the repository and the
+  machine on the same commit so the page and the API agree.
+- Nothing of the board lives on Vercel in this mode: no database, no browser, and no
+  `APP_SECRET`. The board is not even imported.
+
+The cost is one extra hop — browser → Vercel → your PC — worth perhaps 0.2–0.4 s per action.
+A stable tunnel (a Cloudflare *named* tunnel on a domain you own, or Tailscale Funnel) avoids
+that hop, but needs a domain or a second VPN client on the machine.
+
+`scripts/test-frontdoor.mjs` exercises it against a running board: the page and its static
+files, the invite gate, sign-in cookies, signed-in data, writes, and the 502.
+
 ### Hosting the board on Vercel, scraping from your own computer
 
 The board and the scraper are two halves that share nothing but the database:
@@ -376,6 +404,7 @@ All optional, via environment variables:
 | `ALLOW_REGISTRATION` | `1` | `0` closes sign-ups (the first account can always be created) |
 | `REGISTRATION_CODE` | — | Require an invite code to register |
 | `ALLOWED_HOSTS` | — | Comma-separated Host allowlist, e.g. `jobs.example.com`, or `*.trycloudflare.com` to match any subdomain. Empty accepts any host; set it whenever the server is reachable off-machine |
+| `BOARD_ORIGIN` | — | **Vercel only.** Set it and the deployment becomes a front door forwarding to the board at that URL (the tunnel). Unset, it serves the board itself against `DATABASE_URL` |
 | `TRUST_PROXY` | `0` | Believe `X-Forwarded-Proto`/`-For` and mark session cookies `Secure`. Only behind a proxy you control |
 | `COOKIE_FILE` | `./Hiyashi.json` | Cookie export used by the CLI when no `--user` is given |
 | `DB_FILE` | `./data/workana.db` | SQLite location |
