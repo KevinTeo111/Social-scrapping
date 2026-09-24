@@ -76,6 +76,26 @@ async function frontDoor(req, res) {
     return;
   }
 
+  /*
+   * Cloudflare answers for the tunnel's hostname even when no tunnel is
+   * attached to it: 530 (no tunnel), 521/522/523 (origin unreachable). Passing
+   * those through shows the visitor a bare "Request failed (530)" and blames
+   * the board for something that is really "the machine is not connected".
+   */
+  if ([521, 522, 523, 530].includes(upstream.status)) {
+    res.statusCode = 502;
+    res.setHeader('content-type', 'application/json');
+    res.end(
+      JSON.stringify({
+        error:
+          'The board is not reachable right now. The computer that runs it may be switched off, ' +
+          'or its tunnel may have restarted with a new address.',
+        detail: `the tunnel answered ${upstream.status}`,
+      }),
+    );
+    return;
+  }
+
   res.statusCode = upstream.status;
   upstream.headers.forEach((value, name) => {
     if (!HOP_BY_HOP.has(name.toLowerCase()) && name.toLowerCase() !== 'set-cookie') {
