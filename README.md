@@ -223,6 +223,40 @@ clear text. Prefer **Tailscale** (invited devices only, valid certificate, no fi
 changes) or **Cloudflare Tunnel** (public hostname, no inbound ports). Reserve `hosts`/mDNS
 for a LAN you already trust.
 
+### Everything on one machine, shared through a tunnel
+
+The simplest arrangement, and the fastest: board, scraper and database all on the computer
+that scrapes, with the board published on an HTTPS URL by an outbound tunnel. No hosting
+account, no database quota, nothing opened on the router — the board still listens only on
+`127.0.0.1`, and `cloudflared` connects *out* to Cloudflare and forwards requests in.
+
+```
+run.cmd start      the board and the scraper (database: data\workana.db)
+run.cmd tunnel     publishes it, printing an https://….trycloudflare.com URL
+run.cmd backup     copies the database to data\backups (keep this habit)
+```
+
+With the database local, a query takes under a millisecond instead of the ~340 ms a hosted
+one costs over a slow link: the board opens in **0.3 s** against 1.5 s on hosted Postgres.
+A teammate on the tunnel pays one network trip per action instead.
+
+In `data\local.env`:
+
+| Variable | Why |
+| --- | --- |
+| `APP_SECRET` | keep it — it decrypts the stored Workana sessions |
+| `TRUST_PROXY=1` | the tunnel terminates TLS; this is what marks the session cookie `Secure` |
+| `REGISTRATION_CODE` | **set one.** The URL is public, and without a code anyone who has it can create an account |
+| `ALLOWED_HOSTS=*.trycloudflare.com` | a quick tunnel gets a new hostname each start, and the wildcard covers them without leaving the allowlist empty |
+
+Leave `DATABASE_URL` unset: setting it points everything at a hosted Postgres instead.
+
+Two things to know. The **URL changes every time the tunnel restarts** — for a fixed address,
+either a Cloudflare *named* tunnel (needs a domain on Cloudflare) or Tailscale Funnel (no
+domain needed). And the board is only up **while the machine is on**, which also means the
+database is the only copy of the corpus and every member's session: `run.cmd backup` writes a
+compacted copy with SQLite's `VACUUM INTO`, but keep one off this disk as well.
+
 ### Hosting the board on Vercel, scraping from your own computer
 
 The board and the scraper are two halves that share nothing but the database:
@@ -341,7 +375,7 @@ All optional, via environment variables:
 | `APP_SECRET` | auto-generated | Encrypts stored Workana sessions. Set it explicitly in any shared deployment; losing it makes every stored session unreadable |
 | `ALLOW_REGISTRATION` | `1` | `0` closes sign-ups (the first account can always be created) |
 | `REGISTRATION_CODE` | — | Require an invite code to register |
-| `ALLOWED_HOSTS` | — | Comma-separated Host allowlist, e.g. `jobs.example.com`. Empty accepts any host; set it whenever the server is reachable off-machine |
+| `ALLOWED_HOSTS` | — | Comma-separated Host allowlist, e.g. `jobs.example.com`, or `*.trycloudflare.com` to match any subdomain. Empty accepts any host; set it whenever the server is reachable off-machine |
 | `TRUST_PROXY` | `0` | Believe `X-Forwarded-Proto`/`-For` and mark session cookies `Secure`. Only behind a proxy you control |
 | `COOKIE_FILE` | `./Hiyashi.json` | Cookie export used by the CLI when no `--user` is given |
 | `DB_FILE` | `./data/workana.db` | SQLite location |
@@ -412,6 +446,7 @@ src/
   cli/                 scrape / login-check entry points
 public/                the dashboard (no build step, no framework)
 scripts/               verify.mjs, inspect-db.mjs, shot.mjs diagnostics
+                       backup.mjs: compacted copy of the SQLite database
                        backfill-posted.mjs, backfill-bids.mjs repairs
                        (both default to a dry run; pass --apply to write)
                        test-control.mjs, test-split.mjs: the scrape slot, and the

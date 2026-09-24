@@ -8,6 +8,7 @@ rem definition, so this runs regardless of the policy.
 rem
 rem   run.cmd                 start the board and the scraper together
 rem   run.cmd worker          start the scraper only (the board is on Vercel)
+rem   run.cmd tunnel          publish the board on an https URL (Cloudflare)
 rem   run.cmd scrape          run one scrape and exit
 rem   run.cmd login-check     verify the stored cookies still authenticate
 rem   run.cmd smoke           run every query against the configured database
@@ -17,6 +18,7 @@ rem   run.cmd clean-tests     remove accounts left by the suites
 rem   run.cmd reset           empty the database (needs --scope, see the script)
 rem   run.cmd proposals       count every proposal from the Workana inbox
 rem   run.cmd migrate         copy the local SQLite corpus into Postgres (add --apply)
+rem   run.cmd backup          copy the database to data\backups (add --keep=N)
 rem
 rem Settings go in data\local.env, one NAME=value per line, for example
 rem
@@ -45,6 +47,27 @@ set "PATH=%NODEDIR%;%PATH%"
 set "TASK=%~1"
 if "%TASK%"=="" set "TASK=start"
 
+rem A tunnel is not a Node task: cloudflared connects out to Cloudflare and
+rem forwards requests to the board on loopback, so nothing has to be opened on
+rem the router and the board never binds a public address.
+rem Set before the block below: everything inside parentheses is expanded when
+rem the block is read, so a variable set in it would still look empty here.
+if "%PORT%"=="" set "PORT=4300"
+
+if /i "%TASK%"=="tunnel" (
+  if not exist "%ROOT%.tools\cloudflared.exe" (
+    echo cloudflared is not installed. Download it to .tools\cloudflared.exe from
+    echo https://github.com/cloudflare/cloudflared/releases/latest
+    exit /b 1
+  )
+  echo.
+  echo   Publishing http://127.0.0.1:%PORT% — the https URL appears below.
+  echo   Add it to ALLOWED_HOSTS in data\local.env, or keep *.trycloudflare.com there.
+  echo.
+  "%ROOT%.tools\cloudflared.exe" tunnel --no-autoupdate --url http://127.0.0.1:%PORT%
+  exit /b %ERRORLEVEL%
+)
+
 set "SCRIPT="
 set "ROLEARG="
 if /i "%TASK%"=="start"       set "SCRIPT=src\server.js"
@@ -59,11 +82,12 @@ if /i "%TASK%"=="clean-tests" set "SCRIPT=scripts\clean-test-accounts.mjs"
 if /i "%TASK%"=="reset"       set "SCRIPT=scripts\reset-database.mjs"
 if /i "%TASK%"=="proposals"   set "SCRIPT=scripts\sync-proposals.mjs"
 if /i "%TASK%"=="migrate"     set "SCRIPT=scripts\migrate-to-postgres.mjs"
+if /i "%TASK%"=="backup"      set "SCRIPT=scripts\backup.mjs"
 
 if "%SCRIPT%"=="" (
   echo Unknown task "%TASK%".
-  echo Tasks: start, worker, scrape, login-check, verify, smoke, last-login,
-  echo        my-bids, clean-tests, reset, proposals, migrate
+  echo Tasks: start, worker, tunnel, scrape, login-check, verify, smoke,
+  echo        last-login, my-bids, clean-tests, reset, proposals, migrate, backup
   exit /b 1
 )
 

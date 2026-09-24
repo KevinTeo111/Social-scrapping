@@ -82,10 +82,19 @@ const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\]|::1)$/i;
  * unexpected Host values closes that off, and costs nothing when the list is
  * configured to the names actually in use.
  */
+const hostAllowed = (host) =>
+  config.allowedHosts.some((allowed) =>
+    // `*.trycloudflare.com` matches any subdomain of it, and nothing else. A
+    // quick tunnel gets a fresh random hostname every time it starts, so an
+    // exact list would have to be edited on each restart -- and an empty list
+    // accepts anything, which is what this guard exists to prevent.
+    allowed.startsWith('*.') ? host.endsWith(allowed.slice(1)) : host === allowed,
+  );
+
 app.use((req, res, next) => {
   if (!config.allowedHosts.length) return next();
   const host = String(req.headers.host || '').toLowerCase().split(':')[0];
-  if (LOOPBACK.test(host) || config.allowedHosts.includes(host)) return next();
+  if (LOOPBACK.test(host) || hostAllowed(host)) return next();
   res.status(400).type('text/plain').send(`Host "${host}" is not allowed. Add it to ALLOWED_HOSTS.`);
 });
 
