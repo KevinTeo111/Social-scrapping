@@ -16,7 +16,7 @@
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { config } from './config.js';
-import { scrape, stopScraping, currentProgress, fetchInsights, checkLogin } from './scraper/scrape.js';
+import { scrape, stopScraping, currentProgress, fetchInsights, checkLogin, isScraping } from './scraper/scrape.js';
 import {
   getWorkanaCookies,
   getWorkanaProxy,
@@ -37,6 +37,22 @@ const SWEEP_BUSY_RETRY_MS = 15_000;
 const PURGE_MS = 6 * 3600e3;
 /** One-off tasks each open their own browser, so only a couple at a time. */
 const MAX_TASKS = 2;
+
+/**
+ * Whether to stop waiting for a run and hand its slot back.
+ *
+ * True when the scrape is no longer running (its own watchdog gave up on it, or
+ * it ended without this loop hearing), or when it has outlived the deadline by
+ * a clear margin. `inFlight` guards the moments before the scrape begins --
+ * sessions and proxies are fetched first, and the scraper is legitimately idle
+ * then, which would otherwise read as a finished run.
+ *
+ * Exported so the decision can be tested without having to wedge a real scrape.
+ */
+export function runIsOver(run, { scraping, now = Date.now(), maxRunMs = control.MAX_RUN_MS }) {
+  if (!run?.inFlight) return false;
+  return !scraping || now - run.startedAt > maxRunMs + 60_000;
+}
 
 export function startWorker({ log = console } = {}) {
   const workerId = `${os.hostname()}#${process.pid}-${crypto.randomBytes(3).toString('hex')}`;
@@ -62,7 +78,7 @@ export function startWorker({ log = console } = {}) {
 
     lastBeat = Date.now();
     const sweep = options.kind === 'sweep';
-    const run = { token, lost: false, stopping: false };
+    const run = { token, lost: false, stopping: false, startedAt: Date.now(), inFlight: false };
     current = run;
     // A quick check every couple of minutes would drown the log; it speaks only
     // when it finds something.
@@ -77,6 +93,7 @@ export function startWorker({ log = console } = {}) {
         if (blocked) throw new Error(blocked);
         const cookies = await getWorkanaCookies(userId);
         if (!cookies) throw new Error('That member has no Workana session stored.');
+        run.inFlight = true;
         const stats = await scrape({ ...options, userId, cookies, proxy: await getWorkanaProxy(userId), trigger });
         if (trigger === 'manual') await recordCookieCheck(userId, { valid: true });
         if (sweep && stats?.inserted) {
@@ -87,6 +104,7 @@ export function startWorker({ log = console } = {}) {
         error = err.message;
         log.error(`[worker] run failed: ${err.message}`);
       } finally {
+        run.inFlight = false;
         // A run that lost its slot must not write over the one that replaced it;
         // finishRun only touches the row while it still carries this token.
         // A quick check must not book the full run: see finishRun().
@@ -208,6 +226,34 @@ export function startWorker({ log = console } = {}) {
     let c = await control.markWorkerSeen(workerId, config.autoScrapeMinutes, config.sweepMinutes);
 
     if (current) {
+      /*
+       * Let go of a run that is never coming back.
+       *
+       * The scrape's own watchdog abandons a run that stops reporting, but the
+       * promise it was awaiting can stay pending for ever -- and this loop,
+       * waiting on that promise, went on renewing the lease of a run that was
+       * already over. The slot then looked perfectly healthy in the database,
+       * so nothing was ever scheduled again: the board simply stopped scraping,
+       * with a lease being refreshed every few seconds to prove it was fine.
+       *
+       * Two ways to notice: the scraper says it is no longer running, or the
+       * run has outlived the deadline by a clear margin. Either way, hand the
+       * slot back now. The abandoned promise may still settle later; finishRun
+       * only touches the row while it carries that run's token, so a late
+       * arrival cannot disturb whatever came next.
+       */
+      if (runIsOver(current, { scraping: isScraping() })) {
+        log.warn(`[worker] the run stopped reporting after ${Math.round((Date.now() - current.startedAt) / 60_000)} min — freeing the slot`);
+        const stale = current;
+        current = null;
+        stale.inFlight = false;
+        await stopScraping().catch(() => {});
+        await control
+          .finishRun(stale.token, { error: 'The run stopped reporting and was abandoned.' })
+          .catch((err) => log.error('[worker] finish:', err.message));
+        return;
+      }
+
       if (Date.now() - lastBeat >= control.HEARTBEAT_MS) {
         lastBeat = Date.now();
         const r = await control.renewLease(current.token, currentProgress());
