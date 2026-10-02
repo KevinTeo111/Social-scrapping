@@ -107,9 +107,14 @@ async function banner() {
         : '  Quick check for new postings disabled',
     );
     console.log(
+      config.deepMinutes
+        ? `  Every list page read every ${config.deepMinutes} min — reply times, bids, statuses (DEEP_MINUTES)`
+        : '  Deep list walk disabled',
+    );
+    console.log(
       config.autoScrapeMinutes
-        ? `  Full refresh every ${config.autoScrapeMinutes} min (AUTO_SCRAPE_MINUTES=0 to disable)`
-        : '  Full refresh disabled',
+        ? `  Descriptions and contacts filled in every ${config.autoScrapeMinutes} min (AUTO_SCRAPE_MINUTES=0 to disable)`
+        : '  Enrichment disabled',
     );
   } else {
     console.log('  Scraper: not in this process (ROLE=web) — another process must run ROLE=worker');

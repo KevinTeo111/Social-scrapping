@@ -431,7 +431,8 @@ All optional, via environment variables:
 | `WORKANA_CATEGORY` | `it-programming` | Category to crawl; empty string crawls all |
 | `WORKANA_LANGUAGE` | `en,pt,es` | Project languages — see the truncation note above |
 | `HEADLESS` | `true` | `false` passes challenges more reliably if you get blocked |
-| `AUTO_SCRAPE_MINUTES` | `10` | Full background refresh — `REFRESH_PAGES` pages plus backlog details and contacts — this long after the previous one ends; `0` disables |
+| `AUTO_SCRAPE_MINUTES` | `10` | Enrichment: descriptions and contender lists for jobs that lack them, reading **no list pages**; `0` disables |
+| `DEEP_MINUTES` | `20` | Walk **every** list page, reading only what the cards carry — reply times, bid counts, statuses — and nothing per job. Also the only walk that can take closed projects off the board, since only a walk that reaches the end proves a job is gone; `0` disables |
 | `SWEEP_MINUTES` | `2` | The quick check for new postings: the newest `SWEEP_PAGES` page(s) and details for jobs not seen before, this often, timed from when the previous check *started*. This is what decides how soon a new posting reaches the board. `0` disables; set both this and `AUTO_SCRAPE_MINUTES` to `0` for no automatic scraping at all |
 | `SWEEP_PAGES` | `1` | Pages the quick check reads — new postings land on page 1 |
 | `REFRESH_PAGES` | `5` | Pages the *background* refresh walks (new jobs land on page 1) |

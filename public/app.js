@@ -1471,21 +1471,28 @@ async function pollStatus() {
        * Calling it "another member" sent people off to ask a colleague what
        * they were doing to the board.
        */
-      const sweep = s.scrapingAuto && s.scrapingKind === 'sweep';
-      const who = sweep
-        ? 'Checking for new jobs'
-        : s.scrapingAuto
-          ? 'Auto-refreshing'
-          : s.scrapingMine
-            ? 'Scraping'
-            : 'Another member is scraping';
+      /*
+       * Three kinds of automatic run, and they mean different things to anyone
+       * watching: a quick look at the newest page, a walk of every page for
+       * reply counts and statuses, or the slow filling-in of descriptions.
+       */
+      const kind = s.scrapingAuto ? s.scrapingKind : null;
+      const autoLabel = {
+        sweep: 'Checking for new jobs',
+        deep: 'Reading every page for replies',
+        enrich: 'Filling in job details',
+      }[kind];
+      const who = autoLabel
+        ?? (s.scrapingAuto ? 'Auto-refreshing' : s.scrapingMine ? 'Scraping' : 'Another member is scraping');
       // A quick check is one page; its progress would only repeat "page 1".
-      text.textContent = sweep ? `${who}…` : who + describeProgress(s.progress);
-      text.title = sweep
-        ? `The board looks at the newest postings every ${s.sweepMinutes} minutes.`
-        : s.scrapingAuto
-          ? `The board refreshes itself every ${s.autoScrapeMinutes} minutes. ` + describeBacklog(s.backlog)
-          : describeBacklog(s.backlog);
+      text.textContent = kind === 'sweep' ? `${who}…` : who + describeProgress(s.progress);
+      text.title = {
+        sweep: `The board looks at the newest postings every ${s.sweepMinutes} minutes.`,
+        deep: 'Walking every list page for reply times, bid counts and statuses — no job pages, so it stays quick.',
+        enrich: `Fetching descriptions and contender lists for jobs that lack them. ${describeBacklog(s.backlog)}`,
+      }[kind] ?? (s.scrapingAuto
+        ? `The board refreshes itself every ${s.autoScrapeMinutes} minutes. ` + describeBacklog(s.backlog)
+        : describeBacklog(s.backlog));
     } else if (s.lastError) {
       dot.className = 'status-dot error';
       text.textContent = s.lastError.slice(0, 60);

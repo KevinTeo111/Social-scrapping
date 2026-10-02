@@ -54,6 +54,44 @@ export function runIsOver(run, { scraping, now = Date.now(), maxRunMs = control.
   return !scraping || now - run.startedAt > maxRunMs + 60_000;
 }
 
+/**
+ * Which automatic run is due, or null.
+ *
+ * Only one thing may run at a time, so when several are due the most
+ * informative wins: the deep walk covers the quick check's pages, and both
+ * matter more than filling in descriptions. Exported so the order can be
+ * tested without waiting out three clocks.
+ */
+export function whichRunIsDue(c, now = Date.now()) {
+  if (!c || c.paused) return null;
+  const nowIso = control.iso(now);
+  const due = (on, at) => on && at && at <= nowIso;
+
+  if (due(config.deepMinutes > 0, c.next_deep_at)) {
+    return {
+      clock: 'deep',
+      // To the end of the list: that is what proves a job is gone, so it is
+      // also the only walk that may take closed projects off the board.
+      options: { kind: 'deep', pages: config.maxListPages, withDetails: false, insightBudget: 0 },
+    };
+  }
+  if (due(config.autoScrapeMinutes > 0, c.next_run_at)) {
+    return {
+      clock: 'enrich',
+      // No list pages at all: pages = 0 skips the walk and goes straight to the
+      // jobs that still lack a description or a contender list.
+      options: { kind: 'enrich', pages: 0 },
+    };
+  }
+  if (due(config.sweepMinutes > 0, c.next_sweep_at)) {
+    return {
+      clock: 'sweep',
+      options: { kind: 'sweep', pages: config.sweepPages, withDetails: false, insightBudget: 0 },
+    };
+  }
+  return null;
+}
+
 export function startWorker({ log = console } = {}) {
   const workerId = `${os.hostname()}#${process.pid}-${crypto.randomBytes(3).toString('hex')}`;
   const interval = config.autoScrapeMinutes * 60_000;
@@ -78,11 +116,17 @@ export function startWorker({ log = console } = {}) {
 
     lastBeat = Date.now();
     const sweep = options.kind === 'sweep';
+    const kindName = { sweep: 'quick check', deep: 'deep list walk', enrich: 'enrichment' }[options.kind];
     const run = { token, lost: false, stopping: false, startedAt: Date.now(), inFlight: false };
     current = run;
     // A quick check every couple of minutes would drown the log; it speaks only
     // when it finds something.
-    if (!sweep) log.log(`[worker] ${trigger} run started (${options.pages ?? config.refreshPages} page(s))`);
+    if (!sweep) {
+      log.log(
+        `[worker] ${kindName ?? `${trigger} run`} started` +
+          (options.kind === 'enrich' ? ' (no list pages)' : ` (${options.pages ?? config.refreshPages} page(s))`),
+      );
+    }
 
     run.promise = (async () => {
       let error = null;
@@ -108,8 +152,14 @@ export function startWorker({ log = console } = {}) {
         // A run that lost its slot must not write over the one that replaced it;
         // finishRun only touches the row while it still carries this token.
         // A quick check must not book the full run: see finishRun().
+        /*
+         * Every automatic clock books itself when its run starts, so finishing
+         * must book nothing: a quick check that booked the enrichment clock
+         * would push it an interval further away every two minutes, and it
+         * would never run at all.
+         */
         await control
-          .finishRun(token, { error, bookNext: !sweep })
+          .finishRun(token, { error, bookNext: trigger === 'manual' })
           .catch((err) => log.error('[worker] finish:', err.message));
         if (current === run) current = null;
         if (!sweep) log.log('[worker] run finished');
@@ -118,68 +168,72 @@ export function startWorker({ log = console } = {}) {
   }
 
   /**
-   * The schedule, two clocks:
+   * The schedule, three clocks for three jobs that cost very different amounts.
    *
-   *   the quick check -- page 1, and details for jobs not seen before -- every
-   *   SWEEP_MINUTES, timed from when the previous one *started*. New postings
-   *   land on page 1, so this decides how soon one reaches the board.
+   *   quick check, every SWEEP_MINUTES -- the newest SWEEP_PAGES list pages.
+   *   deep walk, every DEEP_MINUTES -- every list page to the end.
+   *   enrichment, every AUTO_SCRAPE_MINUTES -- descriptions and contender lists
+   *   for jobs that lack them, and no list pages at all.
    *
-   *   the full refresh -- REFRESH_PAGES pages plus backlog enrichment -- every
-   *   AUTO_SCRAPE_MINUTES after the previous one finished. It is the slow,
-   *   thorough work and has no reason to hurry.
+   * The list walks read only what the cards carry: bid counts, statuses, and
+   * when the client last replied. That is the information that ages by the
+   * hour, and a page of it costs a second or two. Opening each job's own page
+   * costs seconds per job, and while that work rode along with the list walk it
+   * made every walk slow -- a one-page check took 12 to 18 seconds, a walk that
+   * also enriched took 64 to 79. Separating them lets the list be walked often
+   * and the per-item work proceed quietly behind it.
    *
-   * When both are due the full refresh runs: it reads page 1 as well, so it
-   * does the quick check's job too.
+   * Only one thing may run at a time, so when several are due the most
+   * informative wins: the deep walk covers the quick check's pages, and both
+   * matter more than filling in descriptions.
    */
+  function dueRun(c, now = Date.now()) {
+    return whichRunIsDue(c, now);
+  }
+
+  /** Books a clock, from now, however its run turned out. */
+  const book = {
+    deep: (ms) => control.setNextDeepAt(Date.now() + ms),
+    enrich: (ms) => control.setNextRunAt(Date.now() + ms),
+    sweep: (ms) => control.setNextSweepAt(Date.now() + ms),
+  };
+  const intervalOf = { deep: config.deepMinutes * 60_000, enrich: interval, sweep: sweepInterval };
+
   async function maybeScheduled(c) {
     if (c.paused) return;
-    const fullOn = config.autoScrapeMinutes > 0;
-    const sweepOn = config.sweepMinutes > 0;
-    if (!fullOn && !sweepOn) return;
-
     const now = Date.now();
-    const nowIso = control.iso(now);
 
     // First start, or just resumed: wait one interval rather than scraping the
     // instant the process boots.
-    if (fullOn && !c.next_run_at) {
-      await control.setNextRunAt(now + interval);
-      return;
-    }
-    if (sweepOn && !c.next_sweep_at) {
-      await control.setNextSweepAt(now + sweepInterval);
-      return;
-    }
+    if (config.autoScrapeMinutes > 0 && !c.next_run_at) return book.enrich(interval);
+    if (config.sweepMinutes > 0 && !c.next_sweep_at) return book.sweep(sweepInterval);
+    if (config.deepMinutes > 0 && !c.next_deep_at) return book.deep(intervalOf.deep);
 
-    const fullDue = fullOn && c.next_run_at <= nowIso;
-    const sweepDue = sweepOn && c.next_sweep_at <= nowIso;
-    if (!fullDue && !sweepDue) return;
+    const next = dueRun(c, now);
+    if (!next) return;
 
     // Take turns between members so one account does not carry every refresh,
     // and so a member whose cookies expired does not stall the rotation.
     const [candidate] = await scrapeCandidates();
-    if (!candidate) {
-      if (fullDue) await control.setNextRunAt(now + interval);
-      if (sweepDue) await control.setNextSweepAt(now + sweepInterval);
-      return;
-    }
+    if (!candidate) return book[next.clock](intervalOf[next.clock]);
 
-    const options = fullDue
-      ? { kind: 'full', pages: config.refreshPages }
-      : // Details only for jobs this check listed (in practice the new ones);
-        // contact counts need bids first and come with the full refresh.
-        { kind: 'sweep', pages: config.sweepPages, onlyListed: true, insightBudget: 0 };
-    const token = await control.claimSlot({ userId: candidate.id, trigger: 'auto', options, state: 'running' });
+    const token = await control.claimSlot({
+      userId: candidate.id,
+      trigger: 'auto',
+      options: next.options,
+      state: 'running',
+    });
     if (!token) {
       // Somebody pressed Refresh a moment ago. Their run does the same work;
       // come back after it rather than competing.
-      if (fullDue) await control.setNextRunAt(now + BUSY_RETRY_MS);
-      if (sweepDue) await control.setNextSweepAt(now + SWEEP_BUSY_RETRY_MS);
-      return;
+      return book[next.clock](next.clock === 'sweep' ? SWEEP_BUSY_RETRY_MS : BUSY_RETRY_MS);
     }
-    // Booked from the start, so SWEEP_MINUTES is the real gap between checks.
-    if (sweepOn) await control.setNextSweepAt(now + sweepInterval);
-    begin({ holder_user_id: candidate.id, run_trigger: 'auto', options: JSON.stringify(options) }, token);
+    // Booked from the start, so the interval is the real gap between runs.
+    await book[next.clock](intervalOf[next.clock]);
+    begin(
+      { holder_user_id: candidate.id, run_trigger: 'auto', options: JSON.stringify(next.options) },
+      token,
+    );
   }
 
   async function runTask(t) {

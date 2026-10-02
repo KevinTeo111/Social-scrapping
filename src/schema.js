@@ -272,6 +272,8 @@ CREATE TABLE IF NOT EXISTS scrape_control (
   -- The quick check for new postings, on its own clock; see src/worker.js.
   next_sweep_at  ${T.text},
   sweep_minutes  ${T.real},
+  -- The walk of every list page, reading reply times and bid counts only.
+  next_deep_at   ${T.text},
   worker_id      ${T.text},
   worker_seen_at ${T.text}
 );
@@ -373,4 +375,5 @@ export const LATE_COLUMNS = [
   ['job_insights', 'medals', T.text],
   ['scrape_control', 'next_sweep_at', T.text],
   ['scrape_control', 'sweep_minutes', T.real],
+  ['scrape_control', 'next_deep_at', T.text],
 ];

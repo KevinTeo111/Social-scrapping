@@ -215,15 +215,35 @@ export const config = {
   navTimeoutMs: num(process.env.NAV_TIMEOUT_MS, 60000),
   challengeTimeoutMs: num(process.env.CHALLENGE_TIMEOUT_MS, 45000),
 
-  /** Background refresh loop in the server. 0 disables it. */
+  /*
+   * The automatic work is three separate jobs on three clocks, because they
+   * cost wildly different amounts and only one of them is urgent.
+   *
+   * A list page carries everything that changes by the hour: the bid count, the
+   * status, and **when the client last replied** -- which is what says whether a
+   * project you bid on is still alive and worth following up. Reading one costs
+   * a second or two. Opening each job's own page for its description, or its
+   * insights page for the contender list, costs seconds *per job*, and that work
+   * used to ride along with the list walk and slow it to a crawl.
+   *
+   * So the list walks never fetch per-item pages, and the per-item work happens
+   * on its own slower clock without touching the list.
+   */
+  /** Enrichment: descriptions and contender lists for jobs that lack them. */
   autoScrapeMinutes: num(process.env.AUTO_SCRAPE_MINUTES, 10),
   /**
-   * The quick check for new postings: the newest SWEEP_PAGES list pages, the
-   * details of any job on them not seen before, and nothing else. New postings
+   * The whole list, every page, reading only what the cards say -- reply times,
+   * bid counts, statuses, and anything newly posted deeper than page one. Also
+   * what lets closed projects be taken off the board, since only a walk that
+   * reaches the end can prove a job is gone. 0 disables it.
+   */
+  deepMinutes: num(process.env.DEEP_MINUTES, 20),
+  /**
+   * The quick check for new postings: the newest SWEEP_PAGES list pages and
+   * nothing else -- no per-item pages, so it is back in seconds. New postings
    * always land on page 1, so this is what decides how soon one reaches the
-   * board -- the full refresh above, with its backlog work, is too slow and too
-   * heavy to run this often. Timed from when the previous check *started*, so
-   * the interval is the real gap. 0 disables it; fractions are allowed.
+   * board. Timed from when the previous check *started*, so the interval is the
+   * real gap. 0 disables it; fractions are allowed.
    */
   sweepMinutes: num(process.env.SWEEP_MINUTES, 2),
   sweepPages: num(process.env.SWEEP_PAGES, 1),

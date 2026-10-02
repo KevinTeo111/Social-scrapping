@@ -49,6 +49,33 @@ const email = 'fresh-owner@local.test';
 const owner = (await findUserByEmail(email)) || (await registerUser({ email, password: 'fresh-test-1234', name: 'Fresh' }));
 await setWorkanaCookies(owner.id, JSON.stringify([{ name: 'workana_session', value: 'fresh', domain: '.workana.com', path: '/' }]));
 
+/* --------------------------------------------------------------- A0 */
+/*
+ * Which of the three clocks wins, and what each run is allowed to fetch. The
+ * list walks must never open a job's own page: that is what made them slow.
+ */
+{
+  const { whichRunIsDue } = await import('../src/worker.js');
+  const now = Date.parse('2026-10-02T12:00:00Z');
+  const past = new Date(now - 60_000).toISOString();
+  const soon = new Date(now + 600_000).toISOString();
+  const clock = (row) => whichRunIsDue(row, now)?.clock ?? null;
+  ok('nothing due -> nothing runs', clock({ next_deep_at: soon, next_run_at: soon, next_sweep_at: soon }) === null);
+  ok('the quick check runs when only it is due', clock({ next_deep_at: soon, next_run_at: soon, next_sweep_at: past }) === 'sweep');
+  ok('all three due -> the deep walk wins', clock({ next_deep_at: past, next_run_at: past, next_sweep_at: past }) === 'deep');
+  ok('enrichment outranks the quick check', clock({ next_deep_at: soon, next_run_at: past, next_sweep_at: past }) === 'enrich');
+  ok('paused -> nothing runs', clock({ paused: 1, next_deep_at: past, next_run_at: past, next_sweep_at: past }) === null);
+
+  const optionsFor = (row) => whichRunIsDue(row, now).options;
+  const sweep = optionsFor({ next_deep_at: soon, next_run_at: soon, next_sweep_at: past });
+  const deep = optionsFor({ next_deep_at: past, next_run_at: soon, next_sweep_at: soon });
+  const enrich = optionsFor({ next_deep_at: soon, next_run_at: past, next_sweep_at: soon });
+  ok('the quick check opens no job pages', sweep.withDetails === false && sweep.insightBudget === 0, JSON.stringify(sweep));
+  ok('the deep walk reads every page and opens no job pages',
+    deep.withDetails === false && deep.insightBudget === 0 && deep.pages >= 100, JSON.stringify(deep));
+  ok('enrichment reads no list pages', enrich.pages === 0, JSON.stringify(enrich));
+}
+
 /* ---------------------------------------------------------------- A */
 console.log('A. schedule (about 200 s)…');
 const since = new Date().toISOString();

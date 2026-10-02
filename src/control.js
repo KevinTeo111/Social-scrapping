@@ -149,6 +149,10 @@ export async function setNextSweepAt(ms) {
   return run('UPDATE scrape_control SET next_sweep_at = ? WHERE id = 1', [ms == null ? null : iso(ms)]);
 }
 
+export async function setNextDeepAt(ms) {
+  return run('UPDATE scrape_control SET next_deep_at = ? WHERE id = 1', [ms == null ? null : iso(ms)]);
+}
+
 /** Frees a slot whose holder stopped reporting. Returns rows changed (0 or 1). */
 export async function clearStale() {
   const now = Date.now();
@@ -208,7 +212,7 @@ export async function requestStop() {
   const wasActive = c.state !== 'idle';
   const direct = c.state === 'requested' || !workerOnline(c) || !slotHeld(c);
   await run(
-    `UPDATE scrape_control SET paused = 1, next_run_at = NULL, next_sweep_at = NULL,
+    `UPDATE scrape_control SET paused = 1, next_run_at = NULL, next_sweep_at = NULL, next_deep_at = NULL,
             stop_requested = CASE WHEN state = 'running' THEN 1 ELSE 0 END
       WHERE id = 1`,
   );
