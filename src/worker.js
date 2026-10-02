@@ -26,7 +26,10 @@ import {
   findUser,
   proxyBlocker,
   recordRunOutcome,
+  recordProxyCheck,
+  brokenInputs,
 } from './auth.js';
+import { checkProxy } from './scraper/proxy-check.js';
 import * as control from './control.js';
 
 /** How often the loop looks for work. Each look is one or two small queries. */
@@ -93,6 +96,43 @@ export function whichRunIsDue(c, now = Date.now()) {
   return null;
 }
 
+/**
+ * Works out why a member's runs collect nothing, and records it against the
+ * field that fixes it.
+ *
+ * The two causes are indistinguishable from the run itself -- an expired
+ * session and a refused proxy both end as an empty page -- so each is tested
+ * for what it is. The proxy first, because it is a single connection rather
+ * than a browser, and because a proxy that refuses makes the session untestable
+ * anyway: the session is then checked through this machine's own connection, so
+ * the answer is about the session rather than the route to it.
+ */
+export async function diagnose(userId, log = console) {
+  const user = await findUser(userId);
+  if (!user) return [];
+  const proxy = await getWorkanaProxy(userId);
+  const result = await checkProxy(proxy);
+  await recordProxyCheck(userId, result);
+  if (!result.ok) log.warn(`[worker] ${user.email}: proxy — ${result.detail}`);
+
+  const cookies = await getWorkanaCookies(userId);
+  if (cookies) {
+    try {
+      const login = await checkLogin({ cookies, userId, proxy: result.ok ? proxy : null });
+      await recordCookieCheck(userId, { valid: login.loggedIn, workanaName: login.user });
+      if (!login.loggedIn) log.warn(`[worker] ${user.email}: Workana did not accept the session`);
+    } catch (err) {
+      log.warn(`[worker] ${user.email}: could not check the session — ${err.message}`);
+    }
+  }
+
+  const needs = brokenInputs(await findUser(userId));
+  log.warn(
+    `[worker] set aside ${user.email}: ${needs.length ? needs.map((n) => n.field).join(' and ') + ' need attention' : 'cause not identified'}`,
+  );
+  return needs;
+}
+
 export function startWorker({ log = console } = {}) {
   const workerId = `${os.hostname()}#${process.pid}-${crypto.randomBytes(3).toString('hex')}`;
   const interval = config.autoScrapeMinutes * 60_000;
@@ -147,7 +187,7 @@ export function startWorker({ log = console } = {}) {
          * neither raises an error, both simply return an empty page.
          */
         const setAside = await recordRunOutcome(userId, { listPages: stats?.pages ?? 0, seen: stats?.seen ?? 0 });
-        if (setAside) log.warn(`[worker] set aside ${(await findUser(userId))?.email}: ${setAside}`);
+        if (setAside) await diagnose(userId, log);
         if (sweep && stats?.inserted) {
           log.log(`[worker] quick check: ${stats.inserted} new posting(s) at ${new Date().toLocaleTimeString()}`);
         }
@@ -254,8 +294,22 @@ export function startWorker({ log = console } = {}) {
       const payload = t.payload ? JSON.parse(t.payload) : {};
       let result;
       if (t.kind === 'verify') {
+        /*
+         * The proxy first, and separately: if it will not carry the request,
+         * the browser would only report "not signed in" about a page it never
+         * reached, and the member would re-export cookies that were fine.
+         */
+        const route = await checkProxy(proxy);
+        await recordProxyCheck(t.user_id, route);
+        if (!route.ok) {
+          await control.completeTask(t.id, {
+            result: { loggedIn: false, proxyOk: false, proxyError: route.detail, user: null },
+          });
+          return;
+        }
         try {
           result = await checkLogin({ cookies, userId: t.user_id, proxy });
+          result = { ...result, proxyOk: true };
           await recordCookieCheck(t.user_id, { valid: result.loggedIn, workanaName: result.user });
         } catch (err) {
           await recordCookieCheck(t.user_id, { valid: false });

@@ -222,7 +222,9 @@ export async function setWorkanaProxy(userId, url) {
   const value = String(url || '').trim();
   if (!value) {
     await run(
-      'UPDATE users SET workana_proxy = NULL, empty_runs = 0, scrape_blocked_at = NULL, scrape_blocked_reason = NULL WHERE id = ?',
+      `UPDATE users SET workana_proxy = NULL, empty_runs = 0, scrape_blocked_at = NULL,
+              scrape_blocked_reason = NULL, proxy_checked_at = NULL, proxy_error = NULL
+        WHERE id = ?`,
       [userId],
     );
     return null;
@@ -243,7 +245,9 @@ export async function setWorkanaProxy(userId, url) {
    * a set-aside session is waiting for, so let it be tried again at once.
    */
   await run(
-    'UPDATE users SET workana_proxy = ?, empty_runs = 0, scrape_blocked_at = NULL, scrape_blocked_reason = NULL WHERE id = ?',
+    `UPDATE users SET workana_proxy = ?, empty_runs = 0, scrape_blocked_at = NULL,
+            scrape_blocked_reason = NULL, proxy_checked_at = NULL, proxy_error = NULL
+      WHERE id = ?`,
     [encrypt(value), userId],
   );
   return describeProxy(value);
@@ -300,6 +304,9 @@ export function publicUser(user) {
     // So the board can say why scraping is refused before anyone presses it.
     proxyRequired: Boolean(proxyBlocker(user)),
     scrapeBlocked: scrapeBlocker(user),
+    // Which fields are known to be wrong, and why — so the panel can ask for
+    // exactly those rather than saying "something failed".
+    brokenInputs: brokenInputs(user),
     createdAt: user.created_at,
   };
 }
@@ -364,6 +371,39 @@ export async function recordRunOutcome(userId, { listPages = 0, seen = 0 } = {})
 /** Why this member's session is set aside, or null. */
 export function scrapeBlocker(user) {
   return user?.scrape_blocked_at ? user.scrape_blocked_reason || 'This session kept collecting nothing.' : null;
+}
+
+/** What the proxy said when last asked to reach Workana. */
+export async function recordProxyCheck(userId, { ok, detail }) {
+  return run('UPDATE users SET proxy_checked_at = ?, proxy_error = ? WHERE id = ?', [
+    new Date().toISOString(),
+    ok ? null : detail || 'the proxy refused the connection',
+    userId,
+  ]);
+}
+
+/**
+ * What this member must fix before their session can be used again, named.
+ *
+ * The point is to stop guessing. An expired session and a refused proxy both
+ * end a run the same way -- an empty page, no error -- so each is tested for
+ * what it actually is: the proxy by asking it to connect, the session by
+ * loading Workana with it. Each entry says which field on the account panel
+ * puts it right.
+ */
+export function brokenInputs(user) {
+  const needs = [];
+  if (user?.proxy_error) {
+    needs.push({ field: 'proxy', problem: user.proxy_error, checkedAt: user.proxy_checked_at });
+  }
+  if (user?.cookies_valid === 0) {
+    needs.push({
+      field: 'session',
+      problem: 'Workana did not accept this session — it has expired or was signed out.',
+      checkedAt: user.cookies_updated_at,
+    });
+  }
+  return needs;
 }
 
 /**

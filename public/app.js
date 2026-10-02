@@ -644,6 +644,49 @@ async function openDrawer(slug, tr) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Telling a member exactly what to re-enter                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * When scraping stops for a member it is one of two things, and from the run
+ * itself they look identical: an expired Workana session and a proxy refusing
+ * the connection both end as an empty page. The server tests each separately
+ * and says which; these turn that into the two fields they have to fill in,
+ * rather than a vague "scraping failed".
+ */
+const needsFixing = (me, field) => (me?.brokenInputs || []).some((n) => n.field === field);
+
+function brokenInputsBanner(me) {
+  const needs = me?.brokenInputs || [];
+  if (!needs.length) return '';
+  const what = needs.map((n) => (n.field === 'proxy' ? 'proxy' : 'Workana session')).join(' and ');
+  return `
+    <div class="acct-help" style="border:1px solid var(--red, #e5484d); border-radius:8px; padding:10px 12px; margin-bottom:14px">
+      <strong style="color:var(--red, #e5484d)">Your ${what} must be entered again.</strong>
+      <ul style="margin:8px 0 0 18px; padding:0">
+        ${needs
+          .map(
+            (n) => `<li style="margin-bottom:4px">
+              <strong>${n.field === 'proxy' ? 'Proxy' : 'Workana session'}:</strong> ${esc(n.problem)}
+              ${n.checkedAt ? `<span style="color:var(--text-mute)"> (checked ${esc(timeAgo(n.checkedAt))})</span>` : ''}
+            </li>`,
+          )
+          .join('')}
+      </ul>
+      <p style="margin:8px 0 0">Scraping with your session is paused until both are working. Fill in the fields
+      below and press <em>Verify</em> — saving either one puts your account back in the rotation.</p>
+    </div>`;
+}
+
+function brokenInputsNotice(me) {
+  if (!me?.scrapeBlocked || (me.brokenInputs || []).length) return '';
+  // Set aside, but neither test blamed anything: say so rather than inventing a cause.
+  return `<p class="acct-help" style="color:var(--red, #e5484d)">
+            <strong>Your session has been set aside.</strong> ${esc(me.scrapeBlocked)}
+          </p>`;
+}
+
+/* ------------------------------------------------------------------ */
 /* Browser alerts for new postings                                     */
 /* ------------------------------------------------------------------ */
 
@@ -1844,7 +1887,8 @@ function accountHtml() {
     ${me.workanaName ? `<div class="acct-row"><span class="k">Workana account</span><span class="v">${esc(me.workanaName)}</span></div>` : ''}
     ${me.cookiesUpdatedAt ? `<div class="acct-row"><span class="k">Session added</span><span class="v">${esc(fullStamp(me.cookiesUpdatedAt))}</span></div>` : ''}
 
-    <h3 style="margin:22px 0 8px;font-size:13px">Your Workana session</h3>
+    ${brokenInputsBanner(me)}
+    <h3 style="margin:22px 0 8px;font-size:13px">Your Workana session${needsFixing(me, 'session') ? ' — needs re-entering' : ''}</h3>
     <p class="acct-help">
       The board scrapes Workana <em>as you</em>, so it needs your own cookies. In Chrome, install a
       cookie-editor extension, open <code>workana.com</code> while signed in, and export as JSON —
@@ -1870,15 +1914,11 @@ function accountHtml() {
       <button class="btn" id="signOut" style="margin-left:auto">Sign out</button>
     </div>
     <p class="acct-help" id="cookieResult" hidden></p>
-    ${me.scrapeBlocked
-      ? `<p class="acct-help" style="color:var(--red, #e5484d)">
-           <strong>Your session has been set aside.</strong> ${esc(me.scrapeBlocked)}
-         </p>`
-      : ''}
+    ${brokenInputsNotice(me)}
 
     <h3 style="margin:22px 0 8px;font-size:13px">Your region
-      <span style="font-weight:400;color:${me.proxyRequired ? 'var(--red, #e5484d)' : 'var(--text-mute)'}">
-        ${me.proxyRequired ? '(required)' : '(optional)'}</span></h3>
+      <span style="font-weight:400;color:${me.proxyRequired || needsFixing(me, 'proxy') ? 'var(--red, #e5484d)' : 'var(--text-mute)'}">
+        ${needsFixing(me, 'proxy') ? '— needs re-entering' : me.proxyRequired ? '(required)' : '(optional)'}</span></h3>
     <p class="acct-help">
       Scraping runs on the server, so by default your Workana session is driven from
       <em>this machine's</em> IP rather than yours. If you are in another country, set an exit
@@ -1895,7 +1935,8 @@ function accountHtml() {
          </p>`
       : '<p class="acct-help">Leave blank to use the server\'s connection.</p>'}
     <input class="f-control" id="proxyBox" placeholder="socks5://host:1080 or http://user:pass@host:8080"
-           value="${esc(me.proxy || '')}">
+           value="${esc(me.proxy || '')}"
+           ${needsFixing(me, 'proxy') ? 'style="border-color:var(--red, #e5484d)" aria-invalid="true"' : ''}>
     <div class="acct-actions" style="margin-top:8px">
       <button class="btn" id="saveProxy">Save region</button>
       ${me.proxy ? '<button class="btn" id="clearProxy">Use server connection</button>' : ''}
@@ -2002,7 +2043,16 @@ function openAccount() {
       }
       await refreshMe();
       openAccount();
-      say(r.loggedIn ? `Signed in to Workana as ${r.user || 'your account'}.` : 'Workana did not accept those cookies.', !r.loggedIn);
+      // Three outcomes, not two: signed in, session refused, or the proxy
+      // never let the check reach Workana — which says nothing about cookies.
+      say(
+        r.proxyOk === false
+          ? `Your proxy stopped the check: ${r.proxyError}. Fix the proxy below, then verify again.`
+          : r.loggedIn
+            ? `Signed in to Workana as ${r.user || 'your account'}.`
+            : 'Workana did not accept those cookies — export them again from a browser where you are signed in.',
+        !r.loggedIn,
+      );
     } catch (ex) {
       say(ex.message, true);
       e.target.disabled = false;

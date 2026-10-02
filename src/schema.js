@@ -380,4 +380,7 @@ export const LATE_COLUMNS = [
   ['users', 'empty_runs', `${T.int} DEFAULT 0`],
   ['users', 'scrape_blocked_at', T.text],
   ['users', 'scrape_blocked_reason', T.text],
+  // What the proxy said when last asked to reach Workana; see proxy-check.js.
+  ['users', 'proxy_checked_at', T.text],
+  ['users', 'proxy_error', T.text],
 ];
