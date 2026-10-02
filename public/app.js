@@ -1870,6 +1870,11 @@ function accountHtml() {
       <button class="btn" id="signOut" style="margin-left:auto">Sign out</button>
     </div>
     <p class="acct-help" id="cookieResult" hidden></p>
+    ${me.scrapeBlocked
+      ? `<p class="acct-help" style="color:var(--red, #e5484d)">
+           <strong>Your session has been set aside.</strong> ${esc(me.scrapeBlocked)}
+         </p>`
+      : ''}
 
     <h3 style="margin:22px 0 8px;font-size:13px">Your region
       <span style="font-weight:400;color:${me.proxyRequired ? 'var(--red, #e5484d)' : 'var(--text-mute)'}">

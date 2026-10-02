@@ -41,6 +41,7 @@ import {
   clearWorkanaCookies,
   setWorkanaProxy,
   proxyBlocker,
+  scrapeBlocker,
   requireAdmin,
 } from './auth.js';
 
@@ -304,6 +305,12 @@ async function viaWorker(req, res, kind, payload, notYet) {
   }
   const needsProxy = proxyBlocker(req.user);
   if (needsProxy) return res.status(403).json({ proxyRequired: true, error: needsProxy });
+  /*
+   * Verify is the exception: checking the session is exactly how someone finds
+   * out why it was set aside, so it must not be refused for being set aside.
+   */
+  const setAside = kind === 'verify' ? null : scrapeBlocker(req.user);
+  if (setAside) return res.status(403).json({ scrapeBlocked: true, error: setAside });
   if (!workerOnline(await readControl())) return res.status(503).json({ offline: true, error: OFFLINE });
 
   const id = await enqueueTask(kind, req.user.id, payload);
@@ -956,6 +963,8 @@ app.post('/api/scrape', requireAuth, async (req, res) => {
    */
   const needsProxy = proxyBlocker(req.user);
   if (needsProxy) return res.status(403).json({ proxyRequired: true, error: needsProxy });
+  const setAside = scrapeBlocker(req.user);
+  if (setAside) return res.status(403).json({ scrapeBlocked: true, error: setAside });
   if (!workerOnline(await readControl())) return res.status(503).json({ offline: true, error: OFFLINE });
 
   const { pages, category, query, detailBudget } = req.body || {};

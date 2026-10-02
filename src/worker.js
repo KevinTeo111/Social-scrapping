@@ -25,6 +25,7 @@ import {
   purgeExpiredSessions,
   findUser,
   proxyBlocker,
+  recordRunOutcome,
 } from './auth.js';
 import * as control from './control.js';
 
@@ -140,6 +141,13 @@ export function startWorker({ log = console } = {}) {
         run.inFlight = true;
         const stats = await scrape({ ...options, userId, cookies, proxy: await getWorkanaProxy(userId), trigger });
         if (trigger === 'manual') await recordCookieCheck(userId, { valid: true });
+        /*
+         * A run that walked list pages and found nothing is the only sign the
+         * board gets that a session has expired or a proxy is refusing it --
+         * neither raises an error, both simply return an empty page.
+         */
+        const setAside = await recordRunOutcome(userId, { listPages: stats?.pages ?? 0, seen: stats?.seen ?? 0 });
+        if (setAside) log.warn(`[worker] set aside ${(await findUser(userId))?.email}: ${setAside}`);
         if (sweep && stats?.inserted) {
           log.log(`[worker] quick check: ${stats.inserted} new posting(s) at ${new Date().toLocaleTimeString()}`);
         }

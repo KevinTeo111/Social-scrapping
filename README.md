@@ -499,6 +499,8 @@ scripts/               verify.mjs, inspect-db.mjs, shot.mjs diagnostics
                        backup.mjs: compacted copy of the SQLite database
                        backfill-posted.mjs, backfill-bids.mjs repairs
                        (both default to a dry run; pass --apply to write)
+                       test-quarantine.mjs: a session that keeps collecting
+                       nothing is set aside, and how it comes back
                        test-require-proxy.mjs: a member may not use their
                        Workana session until they register a proxy
                        test-control.mjs, test-split.mjs: the scrape slot, and the

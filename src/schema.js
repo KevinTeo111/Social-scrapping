@@ -376,4 +376,8 @@ export const LATE_COLUMNS = [
   ['scrape_control', 'next_sweep_at', T.text],
   ['scrape_control', 'sweep_minutes', T.real],
   ['scrape_control', 'next_deep_at', T.text],
+  // A session that keeps coming back empty: see recordRunOutcome() in auth.js.
+  ['users', 'empty_runs', `${T.int} DEFAULT 0`],
+  ['users', 'scrape_blocked_at', T.text],
+  ['users', 'scrape_blocked_reason', T.text],
 ];

@@ -136,8 +136,14 @@ export async function setWorkanaCookies(userId, rawJson) {
   const cookies = parseWorkanaCookies(rawJson); // throws with a useful message
   const hasSession = cookies.some((c) => c.name === 'workana_session' && c.value);
 
+  /*
+   * Clears any quarantine: a fresh session is exactly the fix a set-aside
+   * account is waiting for, so let it be tried again at once.
+   */
   await run(
-    `UPDATE users SET workana_cookies = ?, cookies_updated_at = ?, cookies_valid = NULL WHERE id = ?`,
+    `UPDATE users SET workana_cookies = ?, cookies_updated_at = ?, cookies_valid = NULL,
+            empty_runs = 0, scrape_blocked_at = NULL, scrape_blocked_reason = NULL
+      WHERE id = ?`,
     [encrypt(JSON.stringify(cookies)), new Date().toISOString(), userId],
   );
 
@@ -215,7 +221,10 @@ export async function loadBrowserState(userId) {
 export async function setWorkanaProxy(userId, url) {
   const value = String(url || '').trim();
   if (!value) {
-    await run('UPDATE users SET workana_proxy = NULL WHERE id = ?', [userId]);
+    await run(
+      'UPDATE users SET workana_proxy = NULL, empty_runs = 0, scrape_blocked_at = NULL, scrape_blocked_reason = NULL WHERE id = ?',
+      [userId],
+    );
     return null;
   }
 
@@ -229,7 +238,14 @@ export async function setWorkanaProxy(userId, url) {
     throw new AuthError(`Unsupported proxy protocol "${parsed.protocol.replace(':', '')}".`);
   }
 
-  await run('UPDATE users SET workana_proxy = ? WHERE id = ?', [encrypt(value), userId]);
+  /*
+   * Clears any quarantine: changing the session or the exit is exactly the fix
+   * a set-aside session is waiting for, so let it be tried again at once.
+   */
+  await run(
+    'UPDATE users SET workana_proxy = ?, empty_runs = 0, scrape_blocked_at = NULL, scrape_blocked_reason = NULL WHERE id = ?',
+    [encrypt(value), userId],
+  );
   return describeProxy(value);
 }
 
@@ -283,6 +299,7 @@ export function publicUser(user) {
     proxy: user.workana_proxy ? describeProxy(decrypt(user.workana_proxy)) : null,
     // So the board can say why scraping is refused before anyone presses it.
     proxyRequired: Boolean(proxyBlocker(user)),
+    scrapeBlocked: scrapeBlocker(user),
     createdAt: user.created_at,
   };
 }
@@ -292,11 +309,61 @@ export async function scrapeCandidates() {
   return all(
     `SELECT id FROM users
       WHERE workana_cookies IS NOT NULL AND COALESCE(cookies_valid, 1) = 1
+        AND scrape_blocked_at IS NULL
         ${config.requireProxy ? 'AND (is_admin = 1 OR workana_proxy IS NOT NULL)' : ''}
       ORDER BY COALESCE(
         (SELECT MAX(started_at) FROM scrape_runs WHERE scrape_runs.user_id = users.id), '')
       ASC`,
   );
+}
+
+/** Consecutive runs that collected nothing before a session is set aside. */
+export const EMPTY_RUNS_BEFORE_BLOCK = 3;
+
+/**
+ * Records how a run that walked list pages turned out, and sets a session aside
+ * when it keeps coming back with nothing.
+ *
+ * Three accounts here spent six hours producing nothing on every single run --
+ * two with expired Workana sessions, one behind a proxy that refused the
+ * connection -- while the rotation kept handing them turns and the board said
+ * nothing. A run costs over a minute, so half the schedule was going nowhere.
+ *
+ * Only runs that actually walked a list page count: enrichment reads no list,
+ * so seeing no jobs means nothing there. One good run clears the count, because
+ * an empty page is also what throttling looks like and that passes.
+ */
+export async function recordRunOutcome(userId, { listPages = 0, seen = 0 } = {}) {
+  if (!userId || listPages < 1) return null;
+  if (seen > 0) {
+    await run(
+      `UPDATE users SET empty_runs = 0, scrape_blocked_at = NULL, scrape_blocked_reason = NULL
+        WHERE id = ? AND (empty_runs > 0 OR scrape_blocked_at IS NOT NULL)`,
+      [userId],
+    );
+    return null;
+  }
+
+  const user = await findUser(userId);
+  const empty = (user?.empty_runs ?? 0) + 1;
+  if (empty < EMPTY_RUNS_BEFORE_BLOCK) {
+    await run('UPDATE users SET empty_runs = ? WHERE id = ?', [empty, userId]);
+    return null;
+  }
+  const reason =
+    `${empty} runs in a row collected nothing. Either this Workana session has expired — ` +
+    'check with Verify, and re-export the cookies if so — or the proxy is refusing the ' +
+    'connection. Attaching a session or saving a proxy starts it again.';
+  await run(
+    `UPDATE users SET empty_runs = ?, scrape_blocked_at = ?, scrape_blocked_reason = ? WHERE id = ?`,
+    [empty, new Date().toISOString(), reason, userId],
+  );
+  return reason;
+}
+
+/** Why this member's session is set aside, or null. */
+export function scrapeBlocker(user) {
+  return user?.scrape_blocked_at ? user.scrape_blocked_reason || 'This session kept collecting nothing.' : null;
 }
 
 /**
