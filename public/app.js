@@ -40,6 +40,8 @@ const state = {
 };
 
 let facets = { categories: [], countries: [], skills: [] };
+/** Set while the board is held back, with the reason from the server. */
+let locked = null;
 
 /* ------------------------------------------------------------------ */
 /* Utilities                                                           */
@@ -226,6 +228,18 @@ async function load() {
   const res = await fetch(`/api/jobs?${queryString()}`);
   if (handleAuthLoss(res)) return;
   const data = await res.json();
+  /*
+   * Held back until this member has supplied what the board needs to scrape as
+   * them. Show the reason where the jobs would be rather than a toast over an
+   * empty table, and open the window that fixes it.
+   */
+  if (res.status === 403 && data.setupRequired) {
+    locked = data;
+    render({ total: 0, jobs: [], counts: {}, offset: 0, limit: 0 });
+    promptForInputs();
+    return;
+  }
+  locked = null;
   if (data.error) return toast(data.error);
   render(data);
 }
@@ -233,6 +247,7 @@ async function load() {
 async function loadFacets() {
   const res = await fetch('/api/facets');
   if (handleAuthLoss(res)) return;
+  if (res.status === 403) return; // held back; load() explains why
   facets = await res.json();
   buildFacet('category', facets.categories.filter((c) => c.slug).map((c) => ({ key: c.slug, label: c.name, n: c.n })));
   buildFacet('country', facets.countries.map((c) => ({ key: c.code, label: c.name, icon: flagImg(c.code), n: c.n })));
@@ -256,6 +271,18 @@ function render(data) {
   const tbody = $('#rows');
   tbody.replaceChildren();
   $('#empty').hidden = data.jobs.length > 0;
+  // The empty state says one of two very different things: nothing matched, or
+  // nothing is being shown until this member is set up.
+  if (!data.jobs.length) {
+    $('#empty').querySelector('.empty-title').textContent = locked
+      ? 'The job list is waiting for your details'
+      : 'No jobs match these filters';
+    $('#empty').querySelector('.empty-sub').innerHTML = locked
+      ? `${esc(locked.error)} <button class="btn btn-primary" id="emptyFix" style="margin-left:8px">Open Account</button>`
+      : 'Clear some filters, or hit <strong>Refresh</strong> to scrape Workana.';
+    const fix = $('#emptyFix');
+    if (fix) fix.onclick = () => promptForInputs();
+  }
   for (const job of data.jobs) tbody.appendChild(rowFor(job));
 
   renderChips();
@@ -1813,8 +1840,9 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   closeDrawer();
   $('#statsBackdrop').hidden = true;
-  // The account panel stays open while a member still has no session to scrape with.
-  if (me?.hasCookies) $('#accountBackdrop').hidden = true;
+  // The account panel stays open while anything it asks for is still missing:
+  // dismissing it would leave a board with nothing on it and no explanation.
+  if (!inputsWanted(me).length) $('#accountBackdrop').hidden = true;
 });
 
 const applyTheme = (t) => {
@@ -2153,7 +2181,9 @@ function openAccount() {
 
 $('#accountBtn').onclick = openAccount;
 $('#accountBackdrop').onclick = (e) => {
-  if (e.target.id === 'accountBackdrop') $('#accountBackdrop').hidden = true;
+  if (e.target.id !== 'accountBackdrop') return;
+  if (inputsWanted(me).length) return; // nothing to go back to until it is filled in
+  $('#accountBackdrop').hidden = true;
 };
 
 /* ------------------------------------------------------------------ */

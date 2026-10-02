@@ -42,6 +42,7 @@ import {
   setWorkanaProxy,
   proxyBlocker,
   scrapeBlocker,
+  setupBlocker,
   requireAdmin,
 } from './auth.js';
 
@@ -60,6 +61,20 @@ export function ready() {
     throw err;
   });
   return readiness;
+}
+
+/**
+ * Holds back everything that reads the corpus until this member has supplied a
+ * working session, and a proxy where one is required.
+ *
+ * Applied at the routes rather than in the page, because a page can be bypassed
+ * with a fetch. What stays open is everything needed to put it right: the
+ * account routes, /api/me, the status badge and signing out.
+ */
+function requireSetup(req, res, next) {
+  const blocked = setupBlocker(req.user);
+  if (!blocked) return next();
+  res.status(403).json({ setupRequired: true, needs: blocked.needs, error: blocked.error });
 }
 
 const OFFLINE =
@@ -585,7 +600,7 @@ const SELECT_COLUMNS = `
   CASE WHEN ${CLOSED_SQL} THEN 1 ELSE 0 END AS is_closed
 `;
 
-app.get('/api/jobs', requireAuth, async (req, res) => {
+app.get('/api/jobs', requireAuth, requireSetup, async (req, res) => {
   try {
     const q = req.query;
     const uid = req.user.id;
@@ -619,7 +634,7 @@ app.get('/api/jobs', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/jobs/:slug', requireAuth, async (req, res) => {
+app.get('/api/jobs/:slug', requireAuth, requireSetup, async (req, res) => {
   const job = await get(`SELECT ${SELECT_COLUMNS}, j.description, j.raw ${BASE_FROM} WHERE j.slug = ?`, [
     req.user.id,
     req.params.slug,
@@ -676,7 +691,7 @@ app.get('/api/jobs/:slug', requireAuth, async (req, res) => {
 // NOTE: `GROUP BY <alias>` is a trap here -- SQLite binds the name to a real
 // column when one exists, and both `jobs.slug` and `clients.name` collide with
 // the aliases these queries want. Always group by the underlying expression.
-app.get('/api/facets', requireAuth, async (_req, res) => {
+app.get('/api/facets', requireAuth, requireSetup, async (_req, res) => {
   // Four independent queries, issued together: one round trip, not four.
   const [categories, subcategories, countries, skillRows] = await Promise.all([
     all(
@@ -723,7 +738,7 @@ app.get('/api/facets', requireAuth, async (_req, res) => {
   res.json({ categories, subcategories, countries, skills });
 });
 
-app.get('/api/stats', requireAuth, async (req, res) => {
+app.get('/api/stats', requireAuth, requireSetup, async (req, res) => {
   const totalsQ = get(
       `SELECT COUNT(*) AS jobs,
               SUM(CASE WHEN is_hourly=1 THEN 1 ELSE 0 END) AS hourly,
@@ -906,7 +921,7 @@ app.get('/api/stats', requireAuth, async (req, res) => {
   });
 });
 
-app.post('/api/flags/:slug', requireAuth, async (req, res) => {
+app.post('/api/flags/:slug', requireAuth, requireSetup, async (req, res) => {
   const { starred, hidden, note } = req.body || {};
   await upsertUserJob(req.user.id, req.params.slug, { starred, hidden, note });
   res.json(

@@ -103,6 +103,19 @@ export const config = {
   requireProxy: bool(process.env.REQUIRE_PROXY, true),
 
   /**
+   * Whether the job list is readable before a member has supplied what the
+   * board needs to scrape as them -- a Workana session, and a proxy where one
+   * is required -- and whether it stays readable once one of those is found
+   * broken.
+   *
+   * The board is a shared corpus that only exists because members contribute
+   * their own sessions to collecting it. Reading it while contributing nothing,
+   * through an expired session nobody has noticed, is the state this prevents:
+   * the one person who can fix it is otherwise the last to care.
+   */
+  requireSetup: bool(process.env.REQUIRE_SETUP, true),
+
+  /**
    * Virtual-domain support.
    *
    * `trustProxy` makes Express believe `X-Forwarded-Proto`/`X-Forwarded-For`, which

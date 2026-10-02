@@ -373,6 +373,31 @@ export function scrapeBlocker(user) {
   return user?.scrape_blocked_at ? user.scrape_blocked_reason || 'This session kept collecting nothing.' : null;
 }
 
+/**
+ * What this member must supply before the board will show them anything, or
+ * null when they are set up.
+ *
+ * Deliberately the same list the account panel asks for, so "what is missing"
+ * and "what is refused" can never disagree. REQUIRE_SETUP=0 turns the gate off
+ * and leaves the asking in place.
+ */
+export function setupBlocker(user) {
+  if (!config.requireSetup) return null;
+  const needs = [];
+  if (!user?.workana_cookies) needs.push('session');
+  if (proxyBlocker(user)) needs.push('proxy');
+  for (const broken of brokenInputs(user)) if (!needs.includes(broken.field)) needs.push(broken.field);
+  if (!needs.length) return null;
+
+  const what = needs.map((n) => (n === 'proxy' ? 'a working proxy' : 'a working Workana session')).join(' and ');
+  return {
+    needs,
+    error:
+      `The board is collected by the people reading it. Add ${what} in Account, and the list ` +
+      'opens as soon as it works.',
+  };
+}
+
 /** What the proxy said when last asked to reach Workana. */
 export async function recordProxyCheck(userId, { ok, detail }) {
   return run('UPDATE users SET proxy_checked_at = ?, proxy_error = ? WHERE id = ?', [
