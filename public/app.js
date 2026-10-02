@@ -656,6 +656,41 @@ async function openDrawer(slug, tr) {
  */
 const needsFixing = (me, field) => (me?.brokenInputs || []).some((n) => n.field === field);
 
+/**
+ * Which fields this member has to fill in before the board can scrape as them:
+ * ones a test found broken, plus ones never supplied at all.
+ */
+function inputsWanted(user) {
+  const fields = new Set((user?.brokenInputs || []).map((n) => n.field));
+  if (!user?.hasCookies) fields.add('session');
+  if (user?.proxyRequired) fields.add('proxy');
+  return [...fields];
+}
+
+/**
+ * Opens the account window on arrival when something must be entered.
+ *
+ * Otherwise the board looks perfectly healthy to the person whose session is
+ * the one not working: the jobs are all there, because everyone else's scraping
+ * fills the same board, and nothing on the page says their own account has been
+ * set aside. Asking at the door is the only moment they are certainly looking.
+ */
+function promptForInputs() {
+  const fields = inputsWanted(me);
+  if (!fields.length) return;
+  openAccount();
+  const wantsSession = fields.includes('session');
+  // The paste box lives in a collapsed <details>; open it when that is the
+  // field in question, so the cursor has somewhere to land.
+  if (wantsSession) {
+    const paste = $('#accountModal')?.querySelector('details');
+    if (paste) paste.open = true;
+  }
+  const target = wantsSession ? $('#cookieBox') ?? $('#pickCookieFile') : $('#proxyBox');
+  target?.scrollIntoView?.({ block: 'center' });
+  target?.focus?.();
+}
+
 function brokenInputsBanner(me) {
   const needs = me?.brokenInputs || [];
   if (!needs.length) return '';
@@ -1709,8 +1744,16 @@ async function requestScrape(body, what) {
     toast(`${what} started`);
   } catch (ex) {
     toast(ex.message);
-    // Almost always "add your Workana session first" — take them there.
-    if (/session/i.test(ex.message)) openAccount();
+    /*
+     * Every refusal that is about this member's own setup -- no session yet, no
+     * proxy, or a session set aside -- is fixed in the same window, so open it
+     * rather than leaving them to find it.
+     */
+    if (/session|proxy|set aside|collected nothing/i.test(ex.message)) {
+      await refreshMe();
+      promptForInputs();
+      if (!inputsWanted(me).length) openAccount();
+    }
   } finally {
     // Nothing of ours is in flight any more; from here the buttons follow
     // whatever the server says is running, which pollStatus applies.
@@ -2129,6 +2172,7 @@ async function startApp() {
   pollStatus();
   clearInterval(statusTimer);
   statusTimer = setInterval(pollStatus, 5000);
+  promptForInputs();
 }
 
 (async () => {

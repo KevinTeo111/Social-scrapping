@@ -499,6 +499,8 @@ scripts/               verify.mjs, inspect-db.mjs, shot.mjs diagnostics
                        backup.mjs: compacted copy of the SQLite database
                        backfill-posted.mjs, backfill-bids.mjs repairs
                        (both default to a dry run; pass --apply to write)
+                       test-prompt.mjs: the account window opening by itself
+                       when a session or proxy must be entered
                        test-diagnosis.mjs: naming which of the session and the
                        proxy is at fault, against proxies it runs itself
                        test-quarantine.mjs: a session that keeps collecting
