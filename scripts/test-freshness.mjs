@@ -82,7 +82,11 @@ const since = new Date().toISOString();
 const worker = start('worker', ['src/server.js', '--role=worker'], {
   ...process.env,
   SWEEP_MINUTES: '0.25', // every 15 s
-  AUTO_SCRAPE_MINUTES: '0.75', // 45 s after the last one ends
+  AUTO_SCRAPE_MINUTES: '0.75', // enrichment, every 45 s
+  DEEP_MINUTES: '1.5', // every 90 s, so one lands inside the window
+  // The deep walk goes to the end of the list, which against the real site
+  // outlasts this test; two pages is still "every page there is".
+  MAX_LIST_PAGES: '2',
   REFRESH_PAGES: '2',
   DETAIL_BUDGET: '2',
   INSIGHT_BUDGET: '0',
@@ -95,21 +99,26 @@ const runs = await all(
   `SELECT started_at, finished_at, pages FROM scrape_runs WHERE started_at >= ? AND finished_at IS NOT NULL ORDER BY started_at`,
   [since],
 );
+// The three clocks are told apart by how many list pages they read: the quick
+// check one, the deep walk every page, enrichment none at all.
 const quick = runs.filter((r) => Number(r.pages) === 1);
-const full = runs.filter((r) => Number(r.pages) >= 2);
+const deep = runs.filter((r) => Number(r.pages) >= 2);
+const enrich = runs.filter((r) => Number(r.pages) === 0);
 const secs = (a, b) => (new Date(b) - new Date(a)) / 1000;
 const quickDur = quick.map((r) => secs(r.started_at, r.finished_at)).sort((a, b) => a - b);
 const gaps = runs.slice(1).map((r, i) => secs(runs[i].started_at, r.started_at)).sort((a, b) => a - b);
 const median = (a) => (a.length ? a[Math.floor((a.length - 1) / 2)] : NaN);
-console.log(`  ${runs.length} runs: ${quick.length} quick checks, ${full.length} full refreshes`);
+console.log(`  ${runs.length} runs: ${quick.length} quick checks, ${deep.length} deep walks, ${enrich.length} enrichment`);
 console.log(`  quick check takes: median ${median(quickDur).toFixed(1)} s (min ${quickDur[0]?.toFixed(1)}, max ${quickDur.at(-1)?.toFixed(1)})`);
 console.log(`  gap between run starts: median ${median(gaps).toFixed(1)} s`);
 for (const r of runs) {
   const t = secs(since, r.started_at).toFixed(0).padStart(4);
-  console.log(`    +${t} s  ${Number(r.pages) === 1 ? 'quick check ' : 'full refresh'}  ${secs(r.started_at, r.finished_at).toFixed(1)} s`);
+  const kind = Number(r.pages) === 0 ? 'enrichment ' : Number(r.pages) === 1 ? 'quick check' : 'deep walk  ';
+  console.log(`    +${t} s  ${kind}  ${secs(r.started_at, r.finished_at).toFixed(1)} s`);
 }
 ok('quick checks run repeatedly', quick.length >= 3, `${quick.length}`);
-ok('full refreshes still happen alongside them (never pushed back)', full.length >= 1, `${full.length}`);
+ok('enrichment still gets its turn (never pushed back by the quick checks)', enrich.length >= 1, `${enrich.length}`);
+ok('the deep walk gets its turn too', deep.length >= 1, `${deep.length}`);
 ok('runs follow each other closely (was 12.6 min apart)', median(gaps) < 45, `${median(gaps).toFixed(1)} s`);
 
 /* ---------------------------------------------------------------- B */
@@ -179,6 +188,22 @@ try {
   await addJob('Freshness test: python scraper');
   ok('...while one inside them is announced', await waitFor(async () =>
     (await notes()).some((n) => /python scraper/.test(n.title))));
+
+  /*
+   * A job collected a while ago must not be announced because the filters
+   * changed to include it: an alert is about something that just arrived.
+   */
+  const stale = await addJob('Freshness test: python legacy posting', false);
+  await run('UPDATE jobs SET first_seen_at = ? WHERE slug = ?', [new Date(Date.now() - 45 * 60_000).toISOString(), stale]);
+  await page.fill('#search', '');
+  await sleep(1500);
+  await page.evaluate(() => { alertCursor = new Date(Date.now() - 2 * 3600e3).toISOString(); });
+  const beforeStale = (await notes()).length;
+  const id = await startRun(owner.id);
+  await finishRun(id, { ok: true, pages: 1, seen: 1, inserted: 1 });
+  await sleep(9000);
+  ok('a job collected 45 minutes ago is not announced now',
+    !(await notes()).slice(beforeStale).some((n) => /legacy posting/.test(n.title)));
 
   // A run still in progress that reports new jobs: the list redraws now, not at the end.
   await page.fill('#search', '');

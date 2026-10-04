@@ -790,15 +790,29 @@ function paintAlertsBtn() {
       : 'Alerts are on: a notification and a chime for each new job matching your filters. Click to turn off.';
 }
 
-/** Counts from now, so switching alerts on does not announce the whole board. */
-async function resetAlertCursor() {
+/**
+ * The newest job on the board, whatever the filters say — the mark from which
+ * "new" is measured.
+ */
+async function newestCollected() {
   try {
     const data = await (await fetch('/api/jobs?sort=discovered&limit=1&showClosed=1')).json();
-    alertCursor = data.jobs?.[0]?.first_seen_at || new Date(0).toISOString();
+    return data.jobs?.[0]?.first_seen_at ?? null;
   } catch {
-    alertCursor = new Date().toISOString();
+    return null;
   }
 }
+
+/** Counts from now, so switching alerts on does not announce the whole board. */
+async function resetAlertCursor() {
+  alertCursor = (await newestCollected()) || new Date().toISOString();
+}
+
+/**
+ * An alert is about something that just arrived, so anything older than this is
+ * not announced however new it is to the filters.
+ */
+const ALERT_MAX_AGE_MS = 20 * 60_000;
 
 /** A short two-note chime, made on the spot so there is no sound file to ship. */
 function chime() {
@@ -846,8 +860,11 @@ function announce(jobs) {
   const title = jobs.length === 1
     ? `New job: ${first.title}`
     : `${jobs.length}${jobs.length >= 20 ? '+' : ''} new jobs on Workana`;
+  // "found 4m ago" makes a late alert obvious instead of leaving you to wonder
+  // whether the board was slow or the posting was old.
+  const found = timeAgo(first.first_seen_at);
   const body = jobs.length === 1
-    ? [first.budget_text, first.client_country].filter(Boolean).join(' · ')
+    ? [first.budget_text, first.client_country, `found ${found}`].filter(Boolean).join(' · ')
     : jobs.slice(0, 3).map((j) => `• ${j.title}`).join('\n');
   const n = new Notification(title, { body, tag: 'workana-new-jobs', renotify: true });
   n.onclick = () => {
@@ -877,10 +894,21 @@ async function checkNewJobs() {
     return;
   }
   const jobs = data.jobs || [];
-  for (const j of jobs) if (j.first_seen_at > alertCursor) alertCursor = j.first_seen_at;
-  const fresh = jobs.filter((j) => !alerted.has(j.slug));
+  /*
+   * Only jobs that actually arrived since the last check, and recently.
+   *
+   * The cursor used to advance only when something matching was announced, so
+   * after a quiet spell it sat well in the past — and the next change of filter
+   * made everything collected since then "new", announcing jobs that had been
+   * on the board for the best part of an hour. Now the mark moves to the newest
+   * job on the board whatever the filters match, and an age limit catches
+   * anything that slips past that.
+   */
+  const cutoff = Date.now() - ALERT_MAX_AGE_MS;
+  const fresh = jobs.filter((j) => !alerted.has(j.slug) && new Date(j.first_seen_at).getTime() >= cutoff);
+  for (const j of jobs) alerted.add(j.slug);
+  alertCursor = (await newestCollected()) || alertCursor;
   if (!fresh.length) return;
-  for (const j of fresh) alerted.add(j.slug);
   announce(fresh);
 }
 
