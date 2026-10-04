@@ -784,10 +784,10 @@ function paintAlertsBtn() {
   btn.classList.toggle('btn-go', alertsOn);
   btn.querySelector('.ico').textContent = alertsOn ? '🔔' : '🔕';
   btn.title = !alertsOn
-    ? 'Get a notification and a chime when a new job matching your filters appears'
+    ? 'Get a notification and a chime for every new posting, whatever the filters show'
     : blocked
       ? 'Alerts are on, but this browser blocks notifications for the site, so only the chime plays. Click to turn off.'
-      : 'Alerts are on: a notification and a chime for each new job matching your filters. Click to turn off.';
+      : 'Alerts are on: a notification and a chime for every new posting, whatever the filters show. Click to turn off.';
 }
 
 /**
@@ -875,13 +875,18 @@ function announce(jobs) {
 }
 
 /**
- * Asks for jobs first collected since the last check that match the filters as
- * they are set right now, and announces any not announced before.
+ * Asks for everything first collected since the last check, and announces what
+ * has not been announced before.
+ *
+ * Deliberately ignores the filters on screen. They are a way of reading the
+ * board -- narrowed to compare, to count, to look something up -- and a new
+ * posting is worth knowing about whatever happens to be typed in the search box
+ * at the time. Tying alerts to them meant a filter left over from an hour ago
+ * silently decided what you were told about.
  */
 async function checkNewJobs() {
   if (!alertsOn || !alertCursor) return;
-  const p = new URLSearchParams(queryString());
-  for (const k of ['sort', 'limit', 'offset']) p.delete(k);
+  const p = new URLSearchParams();
   p.set('sort', 'discovered');
   p.set('limit', '20');
   p.set('seenAfter', alertCursor);
@@ -940,7 +945,7 @@ $('#alertsBtn').onclick = async () => {
   paintAlertsBtn();
   const granted = 'Notification' in window && Notification.permission === 'granted';
   toast(granted
-    ? 'Alerts on: you will be told when a new job matching your filters appears'
+    ? 'Alerts on: you will be told about every new posting, whatever the filters show'
     : 'Notifications are blocked for this site, so alerts will only chime. Allow them in the browser to see them.');
   chime(); // so the sound is recognisable when it matters
 };

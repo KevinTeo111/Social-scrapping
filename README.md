@@ -190,9 +190,11 @@ none yet fetches them on the spot.
 - **Statistics** — volume per day, breakdown by category and country, most-requested skills.
 - **New postings arrive on their own.** The scraper checks page 1 every `SWEEP_MINUTES`
   (2 by default), and the list redraws as soon as a run reports new jobs rather than when
-  the run ends. **Alerts** in the toolbar adds a desktop notification and a chime for each
-  new job that matches the filters currently set — narrow them first (a search, a budget,
-  a category) to be told only about work you would bid on. Alerts need the board open in a
+  the run ends. **Alerts** in the toolbar adds a desktop notification and a chime for **every
+  new posting**, whatever the filters on screen happen to show: filters are a way of reading
+  the board, and a posting is worth knowing about whoever is looking at what. Nothing
+  collected more than twenty minutes ago is announced, so a quiet spell cannot bank a
+  backlog, and each notification says when the job was found. Alerts need the board open in a
   tab (a background tab is fine) and are remembered per browser.
 - Starring, hiding and notes are stored locally in `user_flags` and never leave the machine.
 

@@ -178,15 +178,17 @@ try {
   ok('a new job raises a notification', await waitFor(async () =>
     (await notes()).some((n) => /python automation/.test(n.title))), JSON.stringify(await notes()));
 
-  // Only jobs that match the filters as they are set now.
+  /*
+   * Filters are a way of reading the board, not a subscription: a new posting
+   * is announced whatever is typed in the search box at the time.
+   */
   await page.fill('#search', 'python');
   await sleep(1500);
-  const before = (await notes()).length;
   await addJob('Freshness test: golang service');
-  await sleep(9000);
-  ok('a job outside the current filters stays quiet', !(await notes()).slice(before).some((n) => /golang/.test(n.title)));
+  ok('a job outside the current filters is announced anyway', await waitFor(async () =>
+    (await notes()).some((n) => /golang service/.test(n.title))), JSON.stringify(await notes()));
   await addJob('Freshness test: python scraper');
-  ok('...while one inside them is announced', await waitFor(async () =>
+  ok('...as is one inside them', await waitFor(async () =>
     (await notes()).some((n) => /python scraper/.test(n.title))));
 
   /*
