@@ -28,8 +28,9 @@ import {
   recordRunOutcome,
   recordProxyCheck,
   brokenInputs,
+  setScrapeLocale,
 } from './auth.js';
-import { checkProxy } from './scraper/proxy-check.js';
+import { checkProxy, probeExit } from './scraper/proxy-check.js';
 import * as control from './control.js';
 
 /** How often the loop looks for work. Each look is one or two small queries. */
@@ -97,6 +98,47 @@ export function whichRunIsDue(c, now = Date.now()) {
 }
 
 /**
+ * When a failed exit lookup may be tried again. A proxy that swallows the
+ * request costs the full timeout, and nothing is stored when it fails, so
+ * without this it would be retried on every single run forever.
+ */
+const EXIT_RETRY_MS = 30 * 60_000;
+const exitTried = new Map();
+
+/**
+ * Learns which country a member's proxy comes out of, once per proxy.
+ *
+ * It decides the timezone and language their browser presents, which has to
+ * agree with the address Workana sees the traffic arrive from.
+ *
+ * Deliberately *after* a run rather than before: it is one more network call
+ * through a proxy that may be the very thing that is broken, and no run should
+ * ever wait on it. The answer is stored for the next run, so a member's first
+ * run after registering a proxy still presents the instance default and every
+ * run after that presents their own.
+ */
+async function noteExit(userId, proxy, log = console) {
+  if (!proxy) return;
+  const last = exitTried.get(userId);
+  if (last && Date.now() - last < EXIT_RETRY_MS) return;
+  try {
+    const user = await findUser(userId);
+    if (user?.exit_country) return;
+    exitTried.set(userId, Date.now());
+    const exit = await probeExit(proxy);
+    if (!exit.country && !exit.timezone) return;
+    exitTried.delete(userId);
+    const stored = await setScrapeLocale(userId, { ...exit, source: 'probe' });
+    log.log(
+      `[worker] ${user.email}: exit is ${exit.country ?? 'unknown'} — from the next run it presents ` +
+        `${stored.timezone ?? 'the default zone'} / ${stored.locale ?? 'the default language'}`,
+    );
+  } catch {
+    /* A locale is a nicety; never let it stop a run. */
+  }
+}
+
+/**
  * Works out why a member's runs collect nothing, and records it against the
  * field that fixes it.
  *
@@ -114,6 +156,9 @@ export async function diagnose(userId, log = console) {
   const result = await checkProxy(proxy);
   await recordProxyCheck(userId, result);
   if (!result.ok) log.warn(`[worker] ${user.email}: proxy — ${result.detail}`);
+  // While the exit is known to work, note which country it is: it decides what
+  // this member's browser says about itself. Best effort, never fatal.
+  if (result.ok) await noteExit(userId, proxy, log);
 
   const cookies = await getWorkanaCookies(userId);
   if (cookies) {
@@ -178,8 +223,9 @@ export function startWorker({ log = console } = {}) {
         if (blocked) throw new Error(blocked);
         const cookies = await getWorkanaCookies(userId);
         if (!cookies) throw new Error('That member has no Workana session stored.');
+        const proxy = await getWorkanaProxy(userId);
         run.inFlight = true;
-        const stats = await scrape({ ...options, userId, cookies, proxy: await getWorkanaProxy(userId), trigger });
+        const stats = await scrape({ ...options, userId, cookies, proxy, trigger });
         if (trigger === 'manual') await recordCookieCheck(userId, { valid: true });
         /*
          * A run that walked list pages and found nothing is the only sign the
@@ -188,6 +234,8 @@ export function startWorker({ log = console } = {}) {
          */
         const setAside = await recordRunOutcome(userId, { listPages: stats?.pages ?? 0, seen: stats?.seen ?? 0 });
         if (setAside) await diagnose(userId, log);
+        // The run is done; this only prepares what the next one will present.
+        else await noteExit(userId, proxy, log);
         if (sweep && stats?.inserted) {
           log.log(`[worker] quick check: ${stats.inserted} new posting(s) at ${new Date().toLocaleTimeString()}`);
         }

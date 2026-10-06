@@ -394,7 +394,8 @@ async function runScrape({
       }
       onProgress({ phase: 'list-done', page: p, count: usable.length, fresh: fresh.length, ...stats });
 
-      if (p < pages) await jitter();
+      // The pause belongs to the page about to be fetched, not the one just read.
+      if (p < pages) await jitter(p + 1);
     }
 
     /*

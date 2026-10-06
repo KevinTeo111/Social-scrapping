@@ -2,6 +2,7 @@ import { all, get, run, insertReturning } from './sql.js';
 import { hashPassword, verifyPassword, newToken, encrypt, decrypt } from './secrets.js';
 import { parseWorkanaCookies } from './cookies.js';
 import { config } from './config.js';
+import { localeForCountry, isValidTimezone, isSupportedLocale } from './locale.js';
 
 const SESSION_DAYS = 30;
 
@@ -223,7 +224,10 @@ export async function setWorkanaProxy(userId, url) {
   if (!value) {
     await run(
       `UPDATE users SET workana_proxy = NULL, empty_runs = 0, scrape_blocked_at = NULL,
-              scrape_blocked_reason = NULL, proxy_checked_at = NULL, proxy_error = NULL
+              scrape_blocked_reason = NULL, proxy_checked_at = NULL, proxy_error = NULL,
+              exit_country = NULL,
+              scrape_timezone = CASE WHEN scrape_locale_by = 'member' THEN scrape_timezone END,
+              scrape_locale   = CASE WHEN scrape_locale_by = 'member' THEN scrape_locale END
         WHERE id = ?`,
       [userId],
     );
@@ -244,9 +248,17 @@ export async function setWorkanaProxy(userId, url) {
    * Clears any quarantine: changing the session or the exit is exactly the fix
    * a set-aside session is waiting for, so let it be tried again at once.
    */
+  /*
+   * A different exit is very likely a different country, so anything detected
+   * from the old one is now wrong. A value the member typed is left alone.
+   */
   await run(
     `UPDATE users SET workana_proxy = ?, empty_runs = 0, scrape_blocked_at = NULL,
-            scrape_blocked_reason = NULL, proxy_checked_at = NULL, proxy_error = NULL
+            scrape_blocked_reason = NULL, proxy_checked_at = NULL, proxy_error = NULL,
+            exit_country = NULL,
+            scrape_timezone = CASE WHEN scrape_locale_by = 'member' THEN scrape_timezone END,
+            scrape_locale   = CASE WHEN scrape_locale_by = 'member' THEN scrape_locale END,
+            scrape_locale_by = CASE WHEN scrape_locale_by = 'member' THEN 'member' END
       WHERE id = ?`,
     [encrypt(value), userId],
   );
@@ -256,6 +268,64 @@ export async function setWorkanaProxy(userId, url) {
 export async function getWorkanaProxy(userId) {
   const user = await findUser(userId);
   return user?.workana_proxy ? decrypt(user.workana_proxy) : null;
+}
+
+/**
+ * Records where a member's proxy comes out, and the zone and language their
+ * browser should present because of it.
+ *
+ * `source: 'member'` is a value they typed, and it wins over anything detected
+ * later -- they know where they are, and an IP database placing a residential
+ * proxy one country over should not quietly overwrite that. `source: 'probe'`
+ * only fills what is still empty.
+ */
+export async function setScrapeLocale(userId, { country, timezone, locale, source = 'probe' } = {}) {
+  const zone = isValidTimezone(timezone) ? timezone : null;
+  const tag = isSupportedLocale(locale) ? locale : localeForCountry(country);
+
+  if (source === 'member') {
+    await run(
+      `UPDATE users SET exit_country = ?, scrape_timezone = ?, scrape_locale = ?, scrape_locale_by = 'member'
+        WHERE id = ?`,
+      [country || null, zone, isSupportedLocale(tag) ? tag : null, userId],
+    );
+    return { country: country || null, timezone: zone, locale: isSupportedLocale(tag) ? tag : null };
+  }
+
+  await run(
+    `UPDATE users SET exit_country = COALESCE(?, exit_country),
+            scrape_timezone = COALESCE(scrape_timezone, ?),
+            scrape_locale = COALESCE(scrape_locale, ?),
+            /*
+             * The label follows the value, not the history. A member who
+             * cleared these fields, or whose typing was rejected, leaves the
+             * row marked 'member' with nothing in it; a probe that then
+             * supplies the value owns it, and must say so -- otherwise
+             * changing the proxy would preserve a zone nobody chose.
+             */
+            scrape_locale_by = CASE
+              WHEN scrape_timezone IS NOT NULL OR scrape_locale IS NOT NULL THEN scrape_locale_by
+              ELSE 'probe' END
+      WHERE id = ?`,
+    [country || null, zone, isSupportedLocale(tag) ? tag : null, userId],
+  );
+  const user = await findUser(userId);
+  return { country: user?.exit_country ?? null, timezone: user?.scrape_timezone ?? null, locale: user?.scrape_locale ?? null };
+}
+
+/**
+ * The zone and language this member's browser presents. Falls back to the
+ * instance default, which is what a member with no proxy -- the owner, whose
+ * traffic leaves through this machine -- keeps using.
+ */
+export async function getScrapeLocale(userId) {
+  const user = userId ? await findUser(userId) : null;
+  return {
+    timezone: isValidTimezone(user?.scrape_timezone) ? user.scrape_timezone : config.timezone,
+    locale: isSupportedLocale(user?.scrape_locale) ? user.scrape_locale : config.locale,
+    detected: Boolean(user?.scrape_timezone || user?.scrape_locale),
+    country: user?.exit_country ?? null,
+  };
 }
 
 /** Host and port only — never hand the credentials back to the browser. */
@@ -301,6 +371,21 @@ export function publicUser(user) {
     proposalsTotal: user.proposals_total ?? null,
     proposalsSyncedAt: user.proposals_synced_at ?? null,
     proxy: user.workana_proxy ? describeProxy(decrypt(user.workana_proxy)) : null,
+    /*
+     * Where their traffic comes out and what their browser says about itself.
+     * `effective` is what a scrape will actually present, so the panel can show
+     * the instance default being used rather than leaving the fields blank.
+     */
+    exit: {
+      country: user.exit_country ?? null,
+      timezone: user.scrape_timezone ?? null,
+      locale: user.scrape_locale ?? null,
+      setBy: user.scrape_locale_by ?? null,
+      effective: {
+        timezone: isValidTimezone(user.scrape_timezone) ? user.scrape_timezone : config.timezone,
+        locale: isSupportedLocale(user.scrape_locale) ? user.scrape_locale : config.locale,
+      },
+    },
     // So the board can say why scraping is refused before anyone presses it.
     proxyRequired: Boolean(proxyBlocker(user)),
     scrapeBlocked: scrapeBlocker(user),
@@ -314,7 +399,7 @@ export function publicUser(user) {
 /** Members eligible to carry a background refresh, least recently run first. */
 export async function scrapeCandidates() {
   return all(
-    `SELECT id FROM users
+    `SELECT id, scrape_timezone, scrape_locale, exit_country FROM users
       WHERE workana_cookies IS NOT NULL AND COALESCE(cookies_valid, 1) = 1
         AND scrape_blocked_at IS NULL
         ${config.requireProxy ? 'AND (is_admin = 1 OR workana_proxy IS NOT NULL)' : ''}

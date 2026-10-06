@@ -383,4 +383,15 @@ export const LATE_COLUMNS = [
   // What the proxy said when last asked to reach Workana; see proxy-check.js.
   ['users', 'proxy_checked_at', T.text],
   ['users', 'proxy_error', T.text],
+  /*
+   * Where this member's traffic comes out, and what their browser should
+   * therefore say about itself. Detected from the proxy's exit address and
+   * overridable by the member; empty means "use the instance default".
+   * See src/locale.js.
+   */
+  ['users', 'exit_country', T.text],
+  ['users', 'scrape_timezone', T.text],
+  ['users', 'scrape_locale', T.text],
+  // 'probe' (read off the proxy's exit) or 'member' (typed, and never overwritten).
+  ['users', 'scrape_locale_by', T.text],
 ];

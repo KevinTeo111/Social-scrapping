@@ -2045,7 +2045,52 @@ function accountHtml() {
       <button class="btn" id="saveProxy">Save region</button>
       ${me.proxy ? '<button class="btn" id="clearProxy">Use server connection</button>' : ''}
     </div>
-    <p class="acct-help" id="proxyResult" hidden></p>`;
+    <p class="acct-help" id="proxyResult" hidden></p>
+
+    ${localeBlock(me)}`;
+}
+
+/**
+ * What the browser carrying this member's session says about where it is.
+ *
+ * It used to say the same thing for everybody — one instance-wide timezone and
+ * language — while each member's traffic arrived from their own country. A
+ * browser in Tokyo reading Portuguese projects from a São Paulo address is an
+ * impossible combination, and it looked identical across unrelated accounts,
+ * which is a stronger tell than any request rate. So it is read off the proxy's
+ * own exit, and shown here because a member knows better than an IP database
+ * where they actually are.
+ */
+function localeBlock(me) {
+  const x = me.exit || {};
+  const detected = x.setBy === 'probe' && (x.timezone || x.country);
+  return `
+    <h3 style="margin:22px 0 8px;font-size:13px">What your browser says about itself
+      <span style="font-weight:400;color:var(--text-mute)">(optional)</span></h3>
+    <p class="acct-help">
+      Workana sees the country your proxy exits from. These make the browser agree with it,
+      instead of every member's session claiming the same timezone.
+      ${detected
+        ? `Read from your exit${x.country ? ` in <strong>${esc(x.country)}</strong>` : ''}.`
+        : x.setBy === 'member'
+          ? 'Set by you, so detection will not overwrite it.'
+          : 'Not detected yet — the server default is in use until your next run.'}
+    </p>
+    <div class="f-row">
+      <input class="f-control" id="tzBox" placeholder="America/Sao_Paulo"
+             value="${esc(x.timezone || '')}" aria-label="Timezone">
+      <input class="f-control" id="localeBox" placeholder="pt-BR"
+             value="${esc(x.locale || '')}" aria-label="Language">
+    </div>
+    <p class="acct-help" style="margin-top:4px">
+      In use now: <strong>${esc(x.effective?.timezone || '—')}</strong> ·
+      <strong>${esc(x.effective?.locale || '—')}</strong>
+    </p>
+    <div class="acct-actions" style="margin-top:8px">
+      <button class="btn" id="saveLocale">Save</button>
+      ${x.timezone || x.locale ? '<button class="btn" id="clearLocale">Detect again</button>' : ''}
+    </div>
+    <p class="acct-help" id="localeResult" hidden></p>`;
 }
 
 function openAccount() {
@@ -2204,6 +2249,35 @@ function openAccount() {
       openAccount();
       sayProxy('Using the server connection.');
     };
+  }
+
+  const sayLocale = (msg, bad) => {
+    const p = $('#localeResult');
+    p.innerHTML = bad ? `<span style="color:var(--red)">${esc(msg)}</span>` : esc(msg);
+    p.hidden = false;
+  };
+
+  const postLocale = async (body, note) => {
+    try {
+      await api('/api/session/locale', { method: 'POST', body: JSON.stringify(body) });
+      await refreshMe();
+      openAccount();
+      sayLocale(note);
+    } catch (ex) {
+      sayLocale(ex.message, true);
+    }
+  };
+
+  $('#saveLocale').onclick = () =>
+    postLocale(
+      { timezone: $('#tzBox').value.trim(), locale: $('#localeBox').value.trim() },
+      'Saved — your next run will present these.',
+    );
+
+  const clearLocale = $('#clearLocale');
+  if (clearLocale) {
+    clearLocale.onclick = () =>
+      postLocale({ timezone: '', locale: '' }, 'Cleared — it will be read from your exit again.');
   }
 
   $('#signOut').onclick = async () => {

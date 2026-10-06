@@ -225,6 +225,28 @@ export const config = {
   insightHydrateMs: num(process.env.INSIGHT_HYDRATE_MS, 15000),
   minDelayMs: num(process.env.MIN_DELAY_MS, 500),
   maxDelayMs: num(process.env.MAX_DELAY_MS, 1200),
+  /*
+   * Depth at which a list walk eases off, and the pause it takes from then on.
+   *
+   * Cloudflare's objection to these walks is not to their total volume but to
+   * how many pages one session pulls in a row: of every challenge recorded
+   * here, none arrived before page 9 and they cluster at 9-18. So the first
+   * pages stay fast -- that is where new postings are -- and the deep tail,
+   * which nothing is waiting on, slows down enough to finish. A full walk then
+   * takes about four minutes instead of one, well inside its 20-minute slot,
+   * and stops surrendering pages 14-36 to a challenge. 0 disables it.
+   */
+  slowFromPage: num(process.env.SLOW_FROM_PAGE, 8),
+  slowMinDelayMs: num(process.env.SLOW_MIN_DELAY_MS, 2500),
+  slowMaxDelayMs: num(process.env.SLOW_MAX_DELAY_MS, 6000),
+  /*
+   * Optional ceiling on list pages one identity may fetch per hour, counted
+   * from scrape_runs. Off by default, and deliberately: with three identities
+   * carrying the current schedule a ceiling would start dropping runs, which
+   * costs freshness. It is here for the opposite situation -- plenty of
+   * accounts, where capping each one spreads the same work thinner.
+   */
+  maxPagesPerIdentityHour: num(process.env.MAX_PAGES_PER_IDENTITY_HOUR, 0),
   navTimeoutMs: num(process.env.NAV_TIMEOUT_MS, 60000),
   challengeTimeoutMs: num(process.env.CHALLENGE_TIMEOUT_MS, 45000),
 

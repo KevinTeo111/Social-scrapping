@@ -40,11 +40,13 @@ import {
   getWorkanaCookies,
   clearWorkanaCookies,
   setWorkanaProxy,
+  setScrapeLocale,
   proxyBlocker,
   scrapeBlocker,
   setupBlocker,
   requireAdmin,
 } from './auth.js';
+import { isValidTimezone, isSupportedLocale, SUPPORTED_LANGUAGES } from './locale.js';
 
 export const app = express();
 
@@ -302,6 +304,41 @@ app.post('/api/session/proxy', requireAuth, async (req, res) => {
   try {
     const described = await setWorkanaProxy(req.user.id, req.body?.proxy);
     res.json({ ok: true, proxy: described });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+/**
+ * The timezone and language this member's browser presents while scraping.
+ *
+ * Detected from their proxy's exit, but a member can say where they actually
+ * are and that wins -- an IP database placing a residential address a country
+ * over should not override the person sitting behind it. Empty values hand it
+ * back to detection.
+ */
+app.post('/api/session/locale', requireAuth, async (req, res) => {
+  const timezone = String(req.body?.timezone || '').trim();
+  const locale = String(req.body?.locale || '').trim();
+  if (timezone && !isValidTimezone(timezone)) {
+    return res.status(400).json({ error: `"${timezone}" is not a timezone Chromium knows, e.g. America/Sao_Paulo.` });
+  }
+  /*
+   * Only the three languages the board can read back. Workana serves a page in
+   * whatever is asked for, but every timestamp on the board is parsed out of
+   * phrases like "hace 2 horas" -- ask for a fourth language and the posted
+   * dates, the "posted within" filter and the new-posting alerts stop working.
+   */
+  if (locale && !isSupportedLocale(locale)) {
+    return res.status(400).json({
+      error: `"${locale}" is not one of the languages this board can read. Use ${SUPPORTED_LANGUAGES.join(', ')} — e.g. pt-BR, es-AR or en-US.`,
+    });
+  }
+  try {
+    const stored = timezone || locale
+      ? await setScrapeLocale(req.user.id, { country: req.user.exit_country, timezone, locale, source: 'member' })
+      : await setScrapeLocale(req.user.id, { country: null, timezone: null, locale: null, source: 'member' });
+    res.json({ ok: true, exit: stored });
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message });
   }

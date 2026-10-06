@@ -3,14 +3,28 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { config } from '../config.js';
 import { loadWorkanaCookies } from '../cookies.js';
-import { saveBrowserState, loadBrowserState } from '../auth.js';
+import { saveBrowserState, loadBrowserState, getScrapeLocale } from '../auth.js';
+import { acceptLanguage, isValidTimezone, isSupportedLocale } from '../locale.js';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Human-ish pause between navigations so we don't hammer the site. */
-export function jitter() {
-  const { minDelayMs, maxDelayMs } = config;
-  return sleep(minDelayMs + Math.random() * Math.max(0, maxDelayMs - minDelayMs));
+/**
+ * Pause between navigations so we don't hammer the site.
+ *
+ * `nextPage` is how deep into a list walk the *next* request will be, and past
+ * a point it buys a much longer pause. That point is measured, not guessed: of
+ * every challenge this instance has recorded mid-walk, none landed before page
+ * 9 and they cluster at 9-18, which is the signature of a per-session request
+ * budget rather than anything about the account. Easing off there is what lets
+ * a walk reach the end -- and a walk that finishes collects pages 14 to 36,
+ * which a walk challenged at 13 loses entirely. Slower per page, more pages.
+ */
+export function jitter(nextPage = 0) {
+  const { minDelayMs, maxDelayMs, slowFromPage, slowMinDelayMs, slowMaxDelayMs } = config;
+  const deep = slowFromPage > 0 && nextPage >= slowFromPage;
+  const min = deep ? slowMinDelayMs : minDelayMs;
+  const max = deep ? slowMaxDelayMs : maxDelayMs;
+  return sleep(min + Math.random() * Math.max(0, max - min));
 }
 
 /**
@@ -149,20 +163,38 @@ export async function launchContext({
   cookies = null,
   userId = null,
   proxy = null,
+  timezone = null,
+  locale = null,
 } = {}) {
   // A member's own exit beats the instance-wide default.
   const egress = proxy || config.proxy;
   const browser = await launchBrowser(headless);
 
+  /*
+   * The zone and language this identity presents. A member scraping through a
+   * proxy in São Paulo should look like a browser in São Paulo, not like every
+   * other identity on this instance; the instance default is only for traffic
+   * that really does leave from this machine. See src/locale.js.
+   *
+   * Resolved from the account here rather than passed in, so that every entry
+   * point -- a scrape, a login check, a single job's insights, the scripts --
+   * gets it without each one having to remember to look it up.
+   */
+  const own = timezone || locale ? null : userId ? await getScrapeLocale(userId) : null;
+  const zone = isValidTimezone(timezone) ? timezone : isValidTimezone(own?.timezone) ? own.timezone : config.timezone;
+  const tag = isSupportedLocale(locale) ? locale : isSupportedLocale(own?.locale) ? own.locale : config.locale;
+
   const context = await browser.newContext({
     userAgent: config.userAgent,
-    locale: config.locale,
-    timezoneId: config.timezone,
+    locale: tag,
+    timezoneId: zone,
     viewport: { width: 1600, height: 950 },
     deviceScaleFactor: 1,
     ignoreHTTPSErrors: true,
     extraHTTPHeaders: {
-      'Accept-Language': `${config.locale},en;q=0.9`,
+      // Has to agree with `locale` above: Workana picks its translation from
+      // this header, and the two disagreeing was half of the original tell.
+      'Accept-Language': acceptLanguage(tag),
       'Sec-Ch-Ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
       'Sec-Ch-Ua-Mobile': '?0',
       'Sec-Ch-Ua-Platform': '"Windows"',
