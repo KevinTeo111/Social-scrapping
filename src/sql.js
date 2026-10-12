@@ -217,7 +217,21 @@ async function openSqlite() {
 
   fs.mkdirSync(path.dirname(config.dbFile), { recursive: true });
   const db = new DatabaseSync(config.dbFile);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;');
+  /*
+   * `busy_timeout` is the one that is easy to leave out and expensive to leave
+   * out. WAL lets readers and a writer work at once, but two writers still
+   * collide, and SQLite's default timeout is zero: the loser is told "database
+   * is locked" immediately rather than waiting its turn. More than one process
+   * touches this file -- the board and the scraper share it, a backup runs
+   * VACUUM INTO over it, and the scripts in scripts/ open it directly -- so the
+   * collisions are routine and brief. Without a timeout they took the board
+   * down: 1,316 consecutive "database is locked" failures in one evening,
+   * every one of which would have succeeded after a few milliseconds' wait.
+   */
+  db.exec(
+    `PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;` +
+      `PRAGMA busy_timeout = ${config.dbBusyTimeoutMs};`,
+  );
 
   /*
    * A statement that hands back rows is read with all(); anything else goes

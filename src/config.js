@@ -72,6 +72,14 @@ export const config = {
   dbPoolSize: num(process.env.DB_POOL_SIZE, 8),
   /** Client-side limit on any one query; see the pool in src/sql.js. */
   dbQueryTimeoutMs: num(process.env.DB_QUERY_TIMEOUT_MS, 30_000),
+  /**
+   * How long SQLite waits for another writer to finish before giving up. Only
+   * SQLite: Postgres queues writers itself. Generous because the contention
+   * here is brief and routine -- the board, the scraper, a backup and the
+   * scripts all open the same file -- and because failing is far worse than
+   * waiting: at the default of 0 a collision ends the query at once.
+   */
+  dbBusyTimeoutMs: num(process.env.DB_BUSY_TIMEOUT_MS, 15_000),
   dbFile: process.env.DB_FILE || path.join(rootDir, 'data', 'workana.db'),
   storageState: path.join(rootDir, 'data', 'storage-state.json'),
   debugDir: path.join(rootDir, 'data', 'debug'),
