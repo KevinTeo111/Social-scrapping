@@ -621,3 +621,43 @@ export async function lastRun() {
 
 // The query helpers, re-exported so callers have one import for database work.
 export { all, get, run, exec, insertReturning, tx, isPostgres, dialect, close } from './sql.js';
+
+/**
+ * Records who a member is talking to and whether they are at their desk.
+ *
+ * `online` is a sample: the dot said this at the moment the page was read, and
+ * the sweep reads one every couple of minutes. `last_online_at` is the part
+ * that lasts -- the most recent moment we actually saw them on -- which is what
+ * answers "were they around this morning" once the dot has gone out again.
+ *
+ * The label is the only handle Workana offers (the entries have no id), so the
+ * job is matched by title, loosely: case and spacing vary between the sidebar
+ * and the card. A label that matches nothing is still kept, since knowing a
+ * client is online matters even when the project is off the board.
+ */
+export async function upsertChatPresence(userId, entries) {
+  if (!userId || !entries?.length) return 0;
+  const now = new Date().toISOString();
+  let stored = 0;
+
+  for (const entry of entries) {
+    const label = String(entry.label || '').trim();
+    if (!label) continue;
+    const match = await get(
+      `SELECT slug FROM jobs WHERE lower(title) = lower(?) ORDER BY last_listed_at DESC LIMIT 1`,
+      [label],
+    );
+    await run(
+      `INSERT INTO chat_presence (user_id, label, job_slug, online, last_online_at, checked_at, first_seen_at)
+       VALUES (?,?,?,?,?,?,?)
+       ON CONFLICT(user_id, label) DO UPDATE SET
+         job_slug       = COALESCE(excluded.job_slug, chat_presence.job_slug),
+         online         = excluded.online,
+         last_online_at = COALESCE(excluded.last_online_at, chat_presence.last_online_at),
+         checked_at     = excluded.checked_at`,
+      [userId, label, match?.slug ?? null, entry.online ? 1 : 0, entry.online ? now : null, now, now],
+    );
+    stored += 1;
+  }
+  return stored;
+}

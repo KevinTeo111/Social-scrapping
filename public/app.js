@@ -1102,7 +1102,27 @@ function personHtml(p) {
   </div>`;
 }
 
-function drawerHtml({ job, reviews, insights, otherJobs }) {
+/**
+ * Whether this client is at their desk, when it is knowable.
+ *
+ * Workana shows a live dot only in the chat sidebar, and only for people you
+ * already have a conversation with, so this appears on a handful of projects
+ * and is absent everywhere else -- absent meaning "not knowable", not "away".
+ * Distinct from "Last online" above it, which is Workana's own last-login
+ * reading and exists for every client.
+ */
+function presenceKv(presence) {
+  if (!presence) return '';
+  if (presence.online) {
+    return kv('Right now', '<span style="color:var(--green)">● Online</span>', true);
+  }
+  const was = presence.lastOnlineAt
+    ? `Last seen on ${esc(timeAgo(presence.lastOnlineAt))}`
+    : 'Not seen online yet';
+  return kv('Right now', `<span style="color:var(--text-mute)">○ Away · ${was}</span>`);
+}
+
+function drawerHtml({ job, reviews, insights, otherJobs, presence }) {
   const contacted = insights.filter((p) => p.in_contact);
   const others = insights.filter((p) => !p.in_contact);
 
@@ -1233,6 +1253,7 @@ function drawerHtml({ job, reviews, insights, otherJobs }) {
             ? `${esc(timeAgo(job.client_last_login_at))}<span style="color:var(--text-mute)"> · ${esc(fullStamp(job.client_last_login_at))}</span>`
             : esc(job.client_last_login),
         )}
+        ${presenceKv(presence)}
         ${kv('Profile', job.client_profile_url ? `<a href="${esc(job.client_profile_url)}" target="_blank" rel="noopener">View ↗</a>` : null)}
       </div>
     </div>

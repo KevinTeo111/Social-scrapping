@@ -688,3 +688,28 @@ export function normaliseDetail(raw) {
     ...budget,
   };
 }
+
+/**
+ * Runs in the page: who the signed-in member is talking to, and who is online.
+ *
+ * Workana's only live presence signal is the chat sidebar, and it covers just
+ * the member's own conversations -- a project card, a project page and a client
+ * profile all show nothing but "Last login". The sidebar is on every page, so
+ * this is read from a list page the scraper was fetching anyway.
+ *
+ * The entries carry no id, no href and no data attributes: the only handle is
+ * the text, which is the project title for a project conversation and the
+ * person's name otherwise. That is what comes back, for the caller to match
+ * against the board.
+ */
+export function pageExtractPresence() {
+  const out = [];
+  for (const li of document.querySelectorAll('div.members-list li')) {
+    const dot = li.querySelector('[class*="status-online"], [class*="status-offline"]');
+    if (!dot) continue;
+    const label = li.textContent.replace(/\s+/g, ' ').trim();
+    if (!label) continue;
+    out.push({ label: label.slice(0, 200), online: /status-online/.test(dot.className) });
+  }
+  return out;
+}

@@ -10,13 +10,21 @@ import {
   isTargetCrash,
   dump,
 } from './browser.js';
-import { pageExtractList, pageExtractDetail, pageExtractInsights, normaliseListJob, normaliseDetail } from './parse.js';
+import {
+  pageExtractList,
+  pageExtractDetail,
+  pageExtractInsights,
+  pageExtractPresence,
+  normaliseListJob,
+  normaliseDetail,
+} from './parse.js';
 import {
   all,
   get,
   run as dbRun,
   upsertJob,
   upsertClient,
+  upsertChatPresence,
   upsertUserJob,
   saveClientReviews,
   saveInsights,
@@ -392,6 +400,24 @@ async function runScrape({
         stats[result] += 1;
         stats.seen += 1;
       }
+      /*
+       * Who this member is talking to, and who is at their desk. The chat
+       * sidebar is identical on every page, so it is read once, from the page
+       * the run was fetching anyway -- no extra request, and nothing that can
+       * fail the run.
+       */
+      if (p === 1 && userId) {
+        try {
+          const seen = await page.evaluate(pageExtractPresence);
+          if (seen.length) {
+            const kept = await upsertChatPresence(userId, seen);
+            stats.presence = kept;
+          }
+        } catch {
+          /* The sidebar is a bonus; never let it end a walk. */
+        }
+      }
+
       onProgress({ phase: 'list-done', page: p, count: usable.length, fresh: fresh.length, ...stats });
 
       // The pause belongs to the page about to be fetched, not the one just read.

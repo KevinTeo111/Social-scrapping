@@ -718,7 +718,35 @@ app.get('/api/jobs/:slug', requireAuth, requireSetup, async (req, res) => {
       )
     : [];
 
-  res.json({ job: jsonSafe(job), reviews, insights, otherJobs });
+  /*
+   * Whether this client is at their desk right now.
+   *
+   * Only ever known for a client the viewer is already in a conversation with
+   * -- Workana shows the dot nowhere else -- and only for the viewer, since it
+   * is read from their own chat sidebar. Matched on the job first, then on the
+   * project title, because the sidebar labels entries by title and the match is
+   * made when the row is written.
+   */
+  const presence = await get(
+    `SELECT online, last_online_at, checked_at FROM chat_presence
+      WHERE user_id = ? AND (job_slug = ? OR lower(label) = lower(?))
+      ORDER BY checked_at DESC LIMIT 1`,
+    [req.user.id, req.params.slug, job.title ?? ''],
+  );
+
+  res.json({
+    job: jsonSafe(job),
+    reviews,
+    insights,
+    otherJobs,
+    presence: presence
+      ? {
+          online: Boolean(presence.online),
+          lastOnlineAt: presence.last_online_at,
+          checkedAt: presence.checked_at,
+        }
+      : null,
+  });
 });
 
 /* ------------------------------------------------------------------ */

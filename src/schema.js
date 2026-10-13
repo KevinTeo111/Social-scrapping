@@ -293,6 +293,36 @@ CREATE TABLE IF NOT EXISTS worker_tasks (
   finished_at ${T.text}
 );
 
+/*
+ * Whether the clients a member is already talking to are at their desk.
+ *
+ * Workana shows a live online dot, but only in the chat sidebar and only for
+ * conversations the signed-in member already has -- never on a project card, a
+ * project page or a client profile. So this covers the handful of clients who
+ * have actually engaged, which is the set worth timing a follow-up to, and it
+ * costs nothing to collect: the sidebar is in the DOM of every list page the
+ * scraper already loads.
+ *
+ * Private to the member, like their bids: one member's chat list says nothing
+ * about anyone else's. Keyed by the label Workana shows, which is the project
+ * title (or the client's name), because the entries carry no id of their own;
+ * job_slug is filled in when that label matches a job on the board.
+ */
+CREATE TABLE IF NOT EXISTS chat_presence (
+  user_id       ${T.int} NOT NULL,
+  label         ${T.text} NOT NULL,
+  job_slug      ${T.text},
+  online        ${T.int} DEFAULT 0,
+  -- The last moment we saw them online, which outlives the dot going out and
+  -- is what "they were around an hour ago" is read from.
+  last_online_at ${T.text},
+  checked_at    ${T.text} NOT NULL,
+  first_seen_at ${T.text} NOT NULL,
+  PRIMARY KEY (user_id, label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_presence_slug ON chat_presence(user_id, job_slug);
+
 CREATE INDEX IF NOT EXISTS idx_worker_tasks_status ON worker_tasks(status, id);
 CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_published  ON jobs(published_approx_at DESC);
