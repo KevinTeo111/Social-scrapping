@@ -8,6 +8,7 @@ import { all, get, run, exec, insertReturning, isPostgres, connect } from './sql
 import { TABLES, SEARCH, LATE_COLUMNS, LATE_INDEXES } from './schema.js';
 import { config } from './config.js';
 import { parseWorkanaClock } from './scraper/parse.js';
+import { wallClockToUtc } from './locale.js';
 
 /* ------------------------------------------------------------------ */
 /* Schema                                                              */
@@ -140,13 +141,29 @@ export async function reindex(slug) {
 /* Writes                                                              */
 /* ------------------------------------------------------------------ */
 
-export async function upsertClient(client) {
+export async function upsertClient(client, { clockZone = null } = {}) {
   if (!client?.id) return null;
+
+  /*
+   * "Last login" arrives as a bare wall clock -- "October 12, 2026 15:16" --
+   * with no zone on it, and Workana draws it in the zone of whoever is reading.
+   * So the only honest conversion uses the zone the scrape ran in, which the
+   * browser context carries; WORKANA_CLOCK_OFFSET_HOURS stays as the fallback
+   * for a read with no zone behind it, and is a fixed guess.
+   *
+   * Getting this wrong is not cosmetic: once every identity presented its own
+   * zone, one constant was wrong by a different amount per member -- clients
+   * appeared to have posted projects hours after they were last seen, which
+   * cannot happen.
+   */
+  const lastLoginAt =
+    wallClockToUtc(client.lastLogin, clockZone) ??
+    parseWorkanaClock(client.lastLogin, config.workanaClockOffsetHours);
   await run(
     `INSERT INTO clients (id, name, profile_url, avatar_url, country, country_code, rating, rating_count,
                           published_projects, projects_paid, hire_rate, payment_verified, member_since,
-                          last_login, last_login_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          last_login, last_login_at, clock_zone, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        name               = COALESCE(excluded.name, clients.name),
        profile_url        = COALESCE(excluded.profile_url, clients.profile_url),
@@ -162,6 +179,7 @@ export async function upsertClient(client) {
        member_since       = COALESCE(excluded.member_since, clients.member_since),
        last_login         = COALESCE(excluded.last_login, clients.last_login),
        last_login_at      = COALESCE(excluded.last_login_at, clients.last_login_at),
+       clock_zone         = COALESCE(excluded.clock_zone, clients.clock_zone),
        updated_at         = excluded.updated_at`,
     [
       client.id,
@@ -178,7 +196,8 @@ export async function upsertClient(client) {
       client.paymentVerified ? 1 : 0,
       client.memberSince ?? null,
       client.lastLogin ?? null,
-      parseWorkanaClock(client.lastLogin, config.workanaClockOffsetHours),
+      lastLoginAt,
+      client.lastLogin ? clockZone : null,
       new Date().toISOString(),
     ],
   );

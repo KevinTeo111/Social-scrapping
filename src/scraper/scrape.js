@@ -372,7 +372,7 @@ async function runScrape({
         seenSlugs.add(card.slug);
         const job = normaliseListJob(card, now);
         job.listedAt = new Date(now).toISOString();
-        if (job.client) await upsertClient(job.client);
+        if (job.client) await upsertClient(job.client, { clockZone: context._timezone });
         const result = await upsertJob(job);
 
         /*
@@ -555,7 +555,9 @@ export async function fetchDetail(page, slug, userId = null) {
   const raw = await page.evaluate(pageExtractDetail);
   const detail = normaliseDetail(raw);
 
-  if (detail.client?.id) await upsertClient(detail.client);
+  // The zone rides on the context so a page opened from it can convert the
+  // client's "Last login" without being handed it again.
+  if (detail.client?.id) await upsertClient(detail.client, { clockZone: page.context()._timezone });
 
   await upsertJob({
     slug,

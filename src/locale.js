@@ -101,3 +101,47 @@ export function isValidLocale(tag) {
     return false;
   }
 }
+
+/**
+ * How far ahead of UTC `timeZone` is at a given instant, in minutes.
+ *
+ * Derived from Intl rather than a table, so it follows daylight saving without
+ * anything here needing to know the rules: render the instant in the zone, read
+ * that wall clock back as if it were UTC, and the difference is the offset.
+ */
+export function offsetMinutesAt(timeZone, instantMs) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const p = {};
+  for (const part of dtf.formatToParts(new Date(instantMs))) {
+    if (part.type !== 'literal') p[part.type] = Number(part.value);
+  }
+  // `hour12: false` renders midnight as 24 in some engines.
+  const hour = p.hour === 24 ? 0 : p.hour;
+  return (Date.UTC(p.year, p.month - 1, p.day, hour, p.minute, p.second) - instantMs) / 60_000;
+}
+
+/**
+ * "October 12, 2026 15:16" as read in `timeZone` -> the real instant.
+ *
+ * Workana prints its clocks with no zone at all, so the string is meaningless
+ * until it is told which zone rendered it. Two passes: the offset at the naive
+ * instant, then the offset at the corrected one, which is what settles a time
+ * that falls near a daylight-saving change. Returns null if the zone is unknown
+ * or the text does not parse, so the caller can fall back rather than store a
+ * number it cannot justify.
+ */
+export function wallClockToUtc(text, timeZone) {
+  if (!text || !isValidTimezone(timeZone)) return null;
+  const naive = Date.parse(String(text).trim() + ' UTC');
+  if (!Number.isFinite(naive)) return null;
+  const first = offsetMinutesAt(timeZone, naive);
+  let utc = naive - first * 60_000;
+  const second = offsetMinutesAt(timeZone, utc);
+  if (second !== first) utc = naive - second * 60_000;
+  return new Date(utc).toISOString();
+}

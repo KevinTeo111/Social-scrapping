@@ -356,6 +356,12 @@ export const LATE_COLUMNS = [
   ['scrape_runs', 'insights', `${T.int} DEFAULT 0`],
   ['scrape_runs', 'user_id', T.int],
   ['clients', 'last_login_at', T.text],
+  /*
+   * Which zone rendered the "Last login" wall clock this row was read from.
+   * Workana draws it in the reader's zone and every identity now presents its
+   * own, so without this the stored instant cannot be checked or re-derived.
+   */
+  ['clients', 'clock_zone', T.text],
   ['user_jobs', 'proposal_read', `${T.int} DEFAULT 0`],
   ['user_jobs', 'client_favorite', `${T.int} DEFAULT 0`],
   ['user_jobs', 'proposal_selected', `${T.int} DEFAULT 0`],

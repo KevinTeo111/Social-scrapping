@@ -216,7 +216,15 @@ export async function launchContext({
   context.setDefaultTimeout(config.navTimeoutMs);
 
   context._userId = userId;
-  return { browser, context };
+  /*
+   * The zone this context renders in, carried on the context because Workana
+   * prints its clocks -- "Last login" above all -- as a bare wall clock with no
+   * zone on it. Reading one back requires knowing which zone drew it, and this
+   * is the only place that knows. Rides on the context the way _userId does, so
+   * every page opened from it can convert without being handed the zone again.
+   */
+  context._timezone = zone;
+  return { browser, context, timezone: zone, locale: tag };
 }
 
 /**
