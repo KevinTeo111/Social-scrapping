@@ -813,6 +813,36 @@ async function resetAlertCursor() {
  * not announced however new it is to the filters.
  */
 const ALERT_MAX_AGE_MS = 20 * 60_000;
+/*
+ * An old posting is worth announcing only when the client has just done
+ * something on it. Shorter than the window above on purpose: a project from a
+ * fortnight ago earns an interruption only while whoever posted it is still at
+ * the keyboard.
+ */
+const ALERT_ACTIVITY_MS = 10 * 60_000;
+
+/**
+ * Why this job is worth interrupting someone for, or null if it is not.
+ *
+ * The test used to be "did this row arrive in our database since the last
+ * check", which is not the same question at all. A deep walk that reaches
+ * further than the one before it discovers projects that are weeks old and had
+ * simply never been collected -- 83 of 98 in one three-hour stretch, every one
+ * of them announced as new. What earns a chime is when Workana published the
+ * posting, not when we happened to find it.
+ */
+function alertReason(job, now = Date.now()) {
+  const posted = job.published_approx_at ? Date.parse(job.published_approx_at) : NaN;
+  if (Number.isFinite(posted)) {
+    if (now - posted <= ALERT_MAX_AGE_MS) return 'new';
+  } else if (now - Date.parse(job.first_seen_at) <= ALERT_MAX_AGE_MS) {
+    // No publication date to judge by; when we found it is all there is.
+    return 'new';
+  }
+  const replied = job.last_reply_at ? Date.parse(job.last_reply_at) : NaN;
+  if (Number.isFinite(replied) && now - replied <= ALERT_ACTIVITY_MS) return 'reply';
+  return null;
+}
 
 /** A short two-note chime, made on the spot so there is no sound file to ship. */
 function chime() {
@@ -857,14 +887,26 @@ function announce(jobs) {
   }
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const first = jobs[0];
+  /*
+   * Two kinds of news, and conflating them is what made the alerts untrusted:
+   * a posting that has just gone up, and an older one whose client has just
+   * replied. Both are worth knowing; calling the second "new" was the lie.
+   */
+  const posts = jobs.filter((j) => j.alertReason !== 'reply');
+  const replies = jobs.filter((j) => j.alertReason === 'reply');
+  const parts = [];
+  if (posts.length) parts.push(`${posts.length}${posts.length >= 20 ? '+' : ''} new job${posts.length > 1 ? 's' : ''}`);
+  if (replies.length) parts.push(`${replies.length} client repl${replies.length > 1 ? 'ies' : 'y'}`);
   const title = jobs.length === 1
-    ? `New job: ${first.title}`
-    : `${jobs.length}${jobs.length >= 20 ? '+' : ''} new jobs on Workana`;
+    ? (first.alertReason === 'reply' ? `Client replied: ${first.title}` : `New job: ${first.title}`)
+    : `${parts.join(' and ')} on Workana`;
   // "found 4m ago" makes a late alert obvious instead of leaving you to wonder
   // whether the board was slow or the posting was old.
-  const found = timeAgo(first.first_seen_at);
+  const found = first.alertReason === 'reply'
+    ? `client replied ${timeAgo(first.last_reply_at)}`
+    : `found ${timeAgo(first.first_seen_at)}`;
   const body = jobs.length === 1
-    ? [first.budget_text, first.client_country, `found ${found}`].filter(Boolean).join(' · ')
+    ? [first.budget_text, first.client_country, found].filter(Boolean).join(' · ')
     : jobs.slice(0, 3).map((j) => `• ${j.title}`).join('\n');
   const n = new Notification(title, { body, tag: 'workana-new-jobs', renotify: true });
   n.onclick = () => {
@@ -909,8 +951,13 @@ async function checkNewJobs() {
    * job on the board whatever the filters match, and an age limit catches
    * anything that slips past that.
    */
-  const cutoff = Date.now() - ALERT_MAX_AGE_MS;
-  const fresh = jobs.filter((j) => !alerted.has(j.slug) && new Date(j.first_seen_at).getTime() >= cutoff);
+  const now = Date.now();
+  const fresh = [];
+  for (const j of jobs) {
+    if (alerted.has(j.slug)) continue;
+    const reason = alertReason(j, now);
+    if (reason) fresh.push({ ...j, alertReason: reason });
+  }
   for (const j of jobs) alerted.add(j.slug);
   alertCursor = (await newestCollected()) || alertCursor;
   if (!fresh.length) return;
@@ -945,7 +992,7 @@ $('#alertsBtn').onclick = async () => {
   paintAlertsBtn();
   const granted = 'Notification' in window && Notification.permission === 'granted';
   toast(granted
-    ? 'Alerts on: you will be told about every new posting, whatever the filters show'
+    ? 'Alerts on: every posting as it goes up, and older ones only while the client is replying'
     : 'Notifications are blocked for this site, so alerts will only chime. Allow them in the browser to see them.');
   chime(); // so the sound is recognisable when it matters
 };
