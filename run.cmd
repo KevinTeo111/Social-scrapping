@@ -8,7 +8,8 @@ rem definition, so this runs regardless of the policy.
 rem
 rem   run.cmd                 start the board and the scraper together
 rem   run.cmd worker          start the scraper only (the board is on Vercel)
-rem   run.cmd tunnel          publish the board on an https URL, and keep it up
+rem   run.cmd funnel          publish the board on a permanent https URL (Tailscale)
+rem   run.cmd tunnel          publish it on a throwaway URL instead (cloudflared)
 rem   run.cmd scrape          run one scrape and exit
 rem   run.cmd login-check     verify the stored cookies still authenticate
 rem   run.cmd smoke           run every query against the configured database
@@ -70,10 +71,11 @@ if /i "%TASK%"=="proposals"   set "SCRIPT=scripts\sync-proposals.mjs"
 if /i "%TASK%"=="migrate"     set "SCRIPT=scripts\migrate-to-postgres.mjs"
 if /i "%TASK%"=="backup"      set "SCRIPT=scripts\backup.mjs"
 if /i "%TASK%"=="tunnel"      set "SCRIPT=scripts\tunnel.mjs"
+if /i "%TASK%"=="funnel"      set "SCRIPT=scripts\funnel.mjs"
 
 if "%SCRIPT%"=="" (
   echo Unknown task "%TASK%".
-  echo Tasks: start, worker, tunnel, scrape, login-check, verify, smoke,
+  echo Tasks: start, worker, funnel, tunnel, scrape, login-check, verify, smoke,
   echo        last-login, my-bids, clean-tests, reset, proposals, migrate, backup
   exit /b 1
 )
