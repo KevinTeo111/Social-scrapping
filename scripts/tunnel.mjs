@@ -124,9 +124,36 @@ let child = null;
 let current = null;
 let misses = 0;
 
+/*
+ * How cloudflared talks to Cloudflare's edge.
+ *
+ * Left to itself it prefers QUIC, which is UDP, and on this machine the VPN
+ * mangles it: every hostname this keeper has burned through was preceded by
+ * `lookup region1.v2.argotunnel.com: i/o timeout` in the log. http2 carries the
+ * same tunnel over TCP:7844, which the VPN passes, and pinning IPv4 avoids a
+ * second failure mode where an AAAA record resolves to an edge that cannot be
+ * reached. Slightly slower than QUIC in principle; far faster than a tunnel
+ * that has to be rebuilt under a new name three times a day.
+ *
+ * TUNNEL_PROTOCOL=quic puts the default back if the network ever stops needing
+ * this.
+ */
+const protocol = process.env.TUNNEL_PROTOCOL || 'http2';
+const edgeIpVersion = process.env.TUNNEL_EDGE_IP_VERSION || '4';
+
 function startTunnel() {
   current = null;
-  child = spawn(exe, ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${port}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(
+    exe,
+    [
+      'tunnel',
+      '--no-autoupdate',
+      '--protocol', protocol,
+      '--edge-ip-version', edgeIpVersion,
+      '--url', `http://127.0.0.1:${port}`,
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
   const onData = (buf) => {
     const text = buf.toString();
     const m = text.match(/https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/);
