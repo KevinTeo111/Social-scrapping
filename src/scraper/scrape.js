@@ -32,7 +32,7 @@ import {
   finishRun,
   pruneClosedJobs,
 } from '../db.js';
-import { findUser } from '../auth.js';
+import { findUser, recordCookieCheck } from '../auth.js';
 
 /**
  * One scrape at a time for the whole instance, and a second request is refused
@@ -363,6 +363,39 @@ async function runScrape({
       if (!usable) {
         stats.endedAt = p;
         break;
+      }
+
+      /*
+       * Is this member still signed in?
+       *
+       * A Workana session can expire without anything looking broken. The page
+       * still loads, the walk still collects, and the run still reports
+       * hundreds of jobs -- but they are the thinner list Workana shows a
+       * visitor, nine to a page instead of twenty-two, carrying no client name,
+       * country, rating or hire rate, and running far deeper into old postings.
+       * Two accounts here spent weeks like that: still in the rotation, taking
+       * their turn, quietly filling the board with anonymous rows and
+       * announcing fortnight-old projects as new. The quarantine never fired
+       * because a run that collects 449 jobs does not look empty.
+       *
+       * Checked once, on the first page, before any of it is stored. Setting
+       * the session invalid takes the account out of the rotation by itself
+       * (see scrapeCandidates) and is what makes the board ask them to sign in
+       * again, rather than leaving the one person who can fix it unaware.
+       */
+      if (p === 1 && userId) {
+        const signedIn = await page
+          .evaluate(() => Boolean(document.querySelector('a[href*="/logout"]')))
+          .catch(() => true); // unreadable is not proof of anything
+        if (!signedIn) {
+          await recordCookieCheck(userId, { valid: false });
+          stats.signedOut = true;
+          stats.error =
+            'That Workana session has expired — the page came back signed out, ' +
+            'so nothing was collected. Enter the session again in Account.';
+          stats.endedAt = p;
+          break;
+        }
       }
 
       const fresh = usable.filter((c) => !seenSlugs.has(c.slug));
