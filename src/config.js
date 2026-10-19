@@ -231,6 +231,28 @@ export const config = {
    * what made every freelancer look "New" once. See fetchInsightsOn().
    */
   insightHydrateMs: num(process.env.INSIGHT_HYDRATE_MS, 15000),
+  /**
+   * The longest enrichment may hold the scrape slot.
+   *
+   * Only one scrape runs at a time, so a long enrichment run is time the
+   * two-minute check for new postings spends queueing. One here ran for 34.6
+   * minutes. Nothing waits on any particular job page, and the budget that is
+   * left is simply picked up by the next run, so stopping early costs nothing
+   * but tidiness. 0 removes the ceiling.
+   */
+  enrichMaxMinutes: num(process.env.ENRICH_MAX_MINUTES, 5),
+  /**
+   * Whether a list walk stops when the page comes back signed out.
+   *
+   * On by default, because a session that expires quietly is worse than one
+   * that fails loudly: the walk keeps collecting the thinner list Workana
+   * shows a visitor and nobody notices for weeks. The switch exists because
+   * the check reads one element of Workana's markup -- if they ever rename it,
+   * every account would be set aside at once, and this is the way back without
+   * a deploy. It also lets the suites exercise the scheduler against the real
+   * site without a login.
+   */
+  requireSignedIn: bool(process.env.REQUIRE_SIGNED_IN, true),
   minDelayMs: num(process.env.MIN_DELAY_MS, 500),
   maxDelayMs: num(process.env.MAX_DELAY_MS, 1200),
   /*

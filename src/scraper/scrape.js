@@ -156,6 +156,38 @@ export class ScrapeBusyError extends Error {
 let cancelling = false;
 let activeBrowser = null;
 
+/*
+ * Set when something more urgent is waiting for the slot.
+ *
+ * Only one scrape may run at a time, which is what stops two full walks
+ * colliding -- but it also put the two-minute check for new postings behind
+ * jobs that hold the slot for six to thirty-five minutes. Measured over twelve
+ * hours, 77 of an expected 360 quick checks actually ran, and a posting took a
+ * median of ten minutes to reach the board when page one is read in under
+ * thirty seconds.
+ *
+ * Enrichment is the one that can give way: it opens job pages from a backlog,
+ * nothing is waiting on any particular one, and stopping early costs only the
+ * remainder of a budget the next run picks up. A list walk is not interrupted
+ * -- it has to reach the end before it can say a job is gone.
+ */
+let yielding = false;
+/** When this run's enrichment must stop regardless, so it cannot sit on the slot. */
+let enrichDeadline = Infinity;
+
+/**
+ * Asks the running enrichment to stop at the next job rather than at the end of
+ * its budget. Returns whether there was anything to ask.
+ */
+export function requestYield() {
+  if (!running) return false;
+  yielding = true;
+  return true;
+}
+
+/** True while enrichment should wind up: asked to yield, or out of time. */
+const windingUp = () => yielding || Date.now() > enrichDeadline;
+
 export const isCancelling = () => cancelling && Boolean(running);
 
 /**
@@ -262,6 +294,10 @@ async function runScrape({
   const runId = await startRun(userId);
   // A stop applies to the run that was in flight, never to the next one.
   cancelling = false;
+  // So does a yield; and enrichment gets a ceiling on how long it may hold the
+  // slot even when nothing has asked it to step aside.
+  yielding = false;
+  enrichDeadline = config.enrichMaxMinutes > 0 ? Date.now() + config.enrichMaxMinutes * 60_000 : Infinity;
   const stats = { pages: 0, seen: 0, inserted: 0, updated: 0, details: 0, insights: 0, ok: false, error: null };
   const startedAt = Date.now();
   let browser;
@@ -383,7 +419,7 @@ async function runScrape({
        * (see scrapeCandidates) and is what makes the board ask them to sign in
        * again, rather than leaving the one person who can fix it unaware.
        */
-      if (p === 1 && userId) {
+      if (p === 1 && userId && config.requireSignedIn) {
         const signedIn = await page
           .evaluate(() => Boolean(document.querySelector('a[href*="/logout"]')))
           .catch(() => true); // unreadable is not proof of anything
@@ -581,7 +617,7 @@ async function enrichDetails(context, { budget, onProgress = () => {}, userId = 
       const page = await newPage(context);
       try {
         while (queue.length) {
-          if (cancelling) break;
+          if (cancelling || windingUp()) break;
           const slug = queue.shift();
           try {
             await fetchDetail(page, slug, userId);
@@ -729,7 +765,7 @@ async function enrichInsights(context, { budget, onProgress = () => {}, userId =
       const page = await newPage(context);
       try {
         while (queue.length) {
-          if (cancelling) break;
+          if (cancelling || windingUp()) break;
           const slug = queue.shift();
           try {
             await fetchInsightsOn(page, slug, userId);

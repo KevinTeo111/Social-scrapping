@@ -16,7 +16,15 @@
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { config } from './config.js';
-import { scrape, stopScraping, currentProgress, fetchInsights, checkLogin, isScraping } from './scraper/scrape.js';
+import {
+  scrape,
+  stopScraping,
+  currentProgress,
+  fetchInsights,
+  checkLogin,
+  isScraping,
+  requestYield,
+} from './scraper/scrape.js';
 import {
   getWorkanaCookies,
   getWorkanaProxy,
@@ -203,7 +211,7 @@ export function startWorker({ log = console } = {}) {
     lastBeat = Date.now();
     const sweep = options.kind === 'sweep';
     const kindName = { sweep: 'quick check', deep: 'deep list walk', enrich: 'enrichment' }[options.kind];
-    const run = { token, lost: false, stopping: false, startedAt: Date.now(), inFlight: false };
+    const run = { token, lost: false, stopping: false, startedAt: Date.now(), inFlight: false, kind: options.kind, yielded: false };
     current = run;
     // A quick check every couple of minutes would drown the log; it speaks only
     // when it finds something.
@@ -416,6 +424,29 @@ export function startWorker({ log = console } = {}) {
           .finishRun(stale.token, { error: 'The run stopped reporting and was abandoned.' })
           .catch((err) => log.error('[worker] finish:', err.message));
         return;
+      }
+
+      /*
+       * Ask a long enrichment to step aside once the quick check is due.
+       *
+       * Only one scrape runs at a time, which is what keeps two full walks off
+       * Workana at once -- but it also put the two-minute check for new
+       * postings behind jobs holding the slot for six to thirty-five minutes.
+       * Over twelve hours, 77 of an expected 360 quick checks ran, and a
+       * posting took a median of ten minutes to reach the board when page one
+       * takes under thirty seconds to read.
+       *
+       * Enrichment is the one that can give way: nothing waits on any
+       * particular job page, and the rest of the budget is simply picked up by
+       * the next run. A list walk is left alone -- it has to reach the end
+       * before it can prove a job is gone.
+       */
+      if (current.kind === 'enrich' && !current.yielded && config.sweepMinutes > 0) {
+        const sweepDue = c?.next_sweep_at && c.next_sweep_at <= control.iso(Date.now());
+        if (sweepDue && requestYield()) {
+          current.yielded = true;
+          log.log('[worker] quick check is due — enrichment is winding up');
+        }
       }
 
       if (Date.now() - lastBeat >= control.HEARTBEAT_MS) {

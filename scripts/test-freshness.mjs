@@ -86,6 +86,10 @@ const worker = start('worker', ['src/server.js', '--role=worker'], {
   DEEP_MINUTES: '1.5', // every 90 s, so one lands inside the window
   // The deep walk goes to the end of the list, which against the real site
   // outlasts this test; two pages is still "every page there is".
+  // This suite drives the scheduler against the real site with made-up
+  // cookies, so every walk is signed out by construction; the check that
+  // stops such a walk would end the test before it began.
+  REQUIRE_SIGNED_IN: '0',
   MAX_LIST_PAGES: '2',
   REFRESH_PAGES: '2',
   DETAIL_BUDGET: '2',
@@ -166,7 +170,14 @@ try {
     }
     return slug;
   };
-  const waitFor = async (fn, ms = 15_000) => {
+  /*
+   * Long enough to outlast one idle status poll.
+   *
+   * Announcing rides on that poll, and it backs off to twenty seconds when the
+   * board is idle and in view -- a flat five seconds was the whole Vercel bill.
+   * A fifteen-second wait used to be generous and is now a coin toss.
+   */
+  const waitFor = async (fn, ms = 45_000) => {
     const end = Date.now() + ms;
     while (Date.now() < end) { if (await fn()) return true; await sleep(500); }
     return false;
