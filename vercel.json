@@ -6,7 +6,7 @@
   "rewrites": [{ "source": "/(.*)", "destination": "/api" }],
   "functions": {
     "api/index.js": {
-      "maxDuration": 60,
+      "maxDuration": 15,
       "includeFiles": "public/**"
     }
   }

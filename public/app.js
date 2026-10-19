@@ -877,6 +877,15 @@ for (const type of ['pointerdown', 'keydown']) {
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) { unseen = 0; document.title = baseTitle; }
+  /*
+   * Coming back to the tab should show the truth at once rather than up to a
+   * minute of staleness, and going away should drop to the slow rate
+   * immediately instead of after one more fast poll.
+   */
+  if (statusTimer !== null) {
+    if (!document.hidden) pollStatus();
+    schedulePoll();
+  }
 });
 
 function announce(jobs) {
@@ -1639,6 +1648,45 @@ let scrapeRequested = false;
 const REFRESH_TIP = 'Fetch the newest two pages of postings, with their details and contacts';
 const CRAWL_TIP = 'Walk the whole category to the end — slow, but fills an empty instance';
 
+/*
+ * How often to ask the board what it is doing.
+ *
+ * This one poll was the entire hosting bill. Every request goes through the
+ * Vercel function, which proxies it over the tunnel to the workstation and is
+ * billed for provisioned memory the whole time it waits -- about 1.2 s per
+ * call, against 1.3 ms when the board is asked directly. At a flat five
+ * seconds, one tab left open was 17,280 calls a day; five members came to some
+ * 29 function-hours a day, which spent three quarters of a month's free tier
+ * in three weeks and would have had the projects paused.
+ *
+ * So the interval follows what is actually happening. Five seconds is only
+ * worth paying for while a run is in flight and somebody is watching it; a
+ * board nobody is looking at still needs a heartbeat, because that is what
+ * drives the alerts, but it does not need one every five seconds -- the
+ * scraper itself only checks for new postings every two minutes.
+ */
+let statusTimer = null;
+const POLL_ACTIVE_MS = 5_000;
+const POLL_IDLE_MS = 20_000;
+const POLL_HIDDEN_MS = 60_000;
+
+function pollDelay() {
+  if (document.hidden) return POLL_HIDDEN_MS;
+  return pollStatus.scraping ? POLL_ACTIVE_MS : POLL_IDLE_MS;
+}
+
+/*
+ * A chain of timeouts rather than an interval: the delay is decided after each
+ * answer, and a slow call can never have the next one queued up behind it.
+ */
+function schedulePoll() {
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(async () => {
+    await pollStatus();
+    schedulePoll();
+  }, pollDelay());
+}
+
 async function pollStatus() {
   try {
     const res = await fetch('/api/status');
@@ -1773,6 +1821,9 @@ async function pollStatus() {
      * record rather than from having watched it scrape: a quick check can start
      * and end between two of these polls.
      */
+    // Decides how soon we ask again; see pollDelay().
+    pollStatus.scraping = Boolean(s.scraping);
+
     const found = s.scraping ? Number(s.progress?.newJobs || 0) : 0;
     const sameRun = s.scrapingSince && s.scrapingSince === pollStatus.runSince;
     if (found > 0 && (!sameRun || found > pollStatus.found)) {
@@ -2365,8 +2416,6 @@ $('#accountBackdrop').onclick = (e) => {
 /* Boot                                                                */
 /* ------------------------------------------------------------------ */
 
-let statusTimer = null;
-
 async function startApp() {
   $('#accountLabel').textContent = me.name || me.email.split('@')[0];
   // Neither needs the other, so the list does not wait behind the filters.
@@ -2375,8 +2424,7 @@ async function startApp() {
   if (alertsOn) await resetAlertCursor();
   paintAlertsBtn();
   pollStatus();
-  clearInterval(statusTimer);
-  statusTimer = setInterval(pollStatus, 5000);
+  schedulePoll();
   promptForInputs();
 }
 
