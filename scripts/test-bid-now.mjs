@@ -125,6 +125,10 @@ try {
       (await reason({ ...fresh, bids: null })) === 'new');
     ok('a client replying on an old crowded job still gets through',
       (await reason({ published_approx_at: ago(3000), first_seen_at: ago(3000), bids: 120, last_reply_at: ago(2) })) === 'reply');
+    ok('...and so does one we only know came back because we watched it change',
+      (await reason({ published_approx_at: ago(20000), first_seen_at: ago(20000), bids: 120,
+                      last_reply_text: '2 weeks ago', last_reply_at: ago(20000), reply_changed_at: ago(4) })) === 'reply',
+      'the case Workana prints too coarsely to see');
 
     /* ---- what it cuts, on the measured distribution ---- */
     const sample = [];
@@ -140,6 +144,16 @@ try {
     ok('...and a crowded fresh posting still reaches them',
       (await reason({ ...fresh, bids: 60 })) === 'new');
     ok('...as does an uncrowded one', (await reason(fresh)) === 'new');
+    /*
+     * The returning-client detection is the granted account's. An ungranted
+     * member keeps exactly the reply alert they always had: the printed time,
+     * when it was precise enough to mean anything.
+     */
+    ok('a returning client on an old post does NOT reach an ungranted member',
+      (await reason({ published_approx_at: ago(20000), first_seen_at: ago(20000), bids: 120,
+                      last_reply_text: '2 weeks ago', last_reply_at: ago(20000), reply_changed_at: ago(4) })) === null);
+    ok('...while the reply alert they always had still works',
+      (await reason({ published_approx_at: ago(3000), first_seen_at: ago(3000), bids: 120, last_reply_at: ago(2) })) === 'reply');
     const keptAll = await page.evaluate((rows) => rows.filter((r) => window.alertReason(r, Date.now())).length, sample);
     ok('...and all 80 do, exactly as before', keptAll === 80, `${keptAll} announced`);
 

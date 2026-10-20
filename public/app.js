@@ -880,10 +880,18 @@ function alertReason(job, now = Date.now()) {
    * watching, so this is the one kind of news the competition has not already
    * used up.
    */
-  if (clientJustReplied(job, now)) return 'reply';
+  /*
+   * Everything gated below belongs to the accounts granted it. A member who
+   * was not granted anything keeps precisely the alerts they had before: every
+   * new posting, and a client reply only when Workana happened to print one to
+   * the minute. Nobody's board changes because somebody else asked.
+   */
+  const granted = Boolean(me?.canTuneAlerts);
+
+  if (granted && clientJustReplied(job, now)) return 'reply';
 
   const prefs = me?.alerts;
-  if (prefs?.mode === 'bid_now') {
+  if (granted && prefs?.mode === 'bid_now') {
     const posted = job.published_approx_at ? Date.parse(job.published_approx_at) : Date.parse(job.first_seen_at);
     const freshEnough = Number.isFinite(posted) && now - posted <= prefs.maxAgeMin * 60_000;
     const stillOpen = !Number.isFinite(Number(job.bids)) || Number(job.bids) <= prefs.maxBids;
@@ -898,6 +906,15 @@ function alertReason(job, now = Date.now()) {
     // No publication date to judge by; when we found it is all there is.
     return 'new';
   }
+
+  /*
+   * The reply test every member has always had: the time Workana printed, and
+   * only when it was precise enough to mean anything. Knowing the moment a
+   * reply actually landed is the granted accounts' affair.
+   */
+  const replied = job.last_reply_at ? Date.parse(job.last_reply_at) : NaN;
+  if (Number.isFinite(replied) && now - replied <= ALERT_ACTIVITY_MS) return 'reply';
+
   return null;
 }
 
