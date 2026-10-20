@@ -395,6 +395,14 @@ export const LATE_COLUMNS = [
    * makes "the client has just come back to an old post" knowable at all.
    */
   ['jobs', 'reply_changed_at', T.text],
+  /*
+   * When the client first started contacting freelancers on this job, or
+   * contacted another one. Of the bids placed from here, those on a job whose
+   * client was already contacting somebody were answered 5.0% of the time
+   * against 0.3% where nobody had been contacted -- seventeen times the rate,
+   * and a far stronger signal than how early the bid went in.
+   */
+  ['jobs', 'contacts_changed_at', T.text],
   ['clients', 'last_login_at', T.text],
   /*
    * Which zone rendered the "Last login" wall clock this row was read from.

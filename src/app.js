@@ -649,7 +649,7 @@ const SELECT_COLUMNS = `
   COALESCE(uf.client_favorite, 0)   AS client_favorite,
   COALESCE(uf.proposal_selected, 0) AS proposal_selected,
   uf.own_budget,
-  j.contacts_count, j.pre_selected_count, j.insights_fetched_at,
+  j.contacts_count, j.contacts_changed_at, j.pre_selected_count, j.insights_fetched_at,
   j.last_reply_text, j.last_reply_at, j.reply_changed_at,
   j.client_id,
   c.name AS client_name, c.avatar_url AS client_avatar_url,

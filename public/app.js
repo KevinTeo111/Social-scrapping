@@ -841,6 +841,24 @@ const ALERT_REPLY_SEEN_MS = 25 * 60_000;
  * keyboard again is the opening, and it is the one kind of news that no amount
  * of competition has already used up.
  */
+/**
+ * Has the client started working through the proposals on a job you bid on?
+ *
+ * The strongest signal this board has. Of the bids placed from here, those on
+ * a job whose client was already contacting somebody were answered 5.0% of the
+ * time against 0.3% where nobody had been contacted -- seventeen times the
+ * rate, and far stronger than how early the bid went in. A client who has just
+ * begun contacting people is shortlisting now, and your proposal is in the
+ * pile they are reading.
+ *
+ * Only for a job you actually bid on. Everyone else's shortlist is not news.
+ */
+function clientShortlisting(job, now) {
+  if (!job.has_own_bid) return false;
+  const noticed = job.contacts_changed_at ? Date.parse(job.contacts_changed_at) : NaN;
+  return Number.isFinite(noticed) && now - noticed <= ALERT_REPLY_SEEN_MS;
+}
+
 function clientJustReplied(job, now) {
   const noticed = job.reply_changed_at ? Date.parse(job.reply_changed_at) : NaN;
   if (Number.isFinite(noticed) && now - noticed <= ALERT_REPLY_SEEN_MS) return true;
@@ -889,6 +907,7 @@ function alertReason(job, now = Date.now()) {
   const granted = Boolean(me?.canTuneAlerts);
 
   if (granted && clientJustReplied(job, now)) return 'reply';
+  if (granted && clientShortlisting(job, now)) return 'shortlist';
 
   const prefs = me?.alerts;
   if (granted && prefs?.mode === 'bid_now') {
@@ -975,19 +994,27 @@ function announce(jobs) {
    * a posting that has just gone up, and an older one whose client has just
    * replied. Both are worth knowing; calling the second "new" was the lie.
    */
-  const posts = jobs.filter((j) => j.alertReason !== 'reply');
+  const posts = jobs.filter((j) => !j.alertReason || j.alertReason === 'new');
   const replies = jobs.filter((j) => j.alertReason === 'reply');
+  const shortlists = jobs.filter((j) => j.alertReason === 'shortlist');
   const parts = [];
   if (posts.length) parts.push(`${posts.length}${posts.length >= 20 ? '+' : ''} new job${posts.length > 1 ? 's' : ''}`);
   if (replies.length) parts.push(`${replies.length} client repl${replies.length > 1 ? 'ies' : 'y'}`);
+  if (shortlists.length) parts.push(`${shortlists.length} now shortlisting`);
   const title = jobs.length === 1
-    ? (first.alertReason === 'reply' ? `Client replied: ${first.title}` : `New job: ${first.title}`)
+    ? first.alertReason === 'reply'
+      ? `Client replied: ${first.title}`
+      : first.alertReason === 'shortlist'
+        ? `Client is shortlisting: ${first.title}`
+        : `New job: ${first.title}`
     : `${parts.join(' and ')} on Workana`;
   // "found 4m ago" makes a late alert obvious instead of leaving you to wonder
   // whether the board was slow or the posting was old.
   const found = first.alertReason === 'reply'
     ? `client replied ${timeAgo(first.last_reply_at)}`
-    : `found ${timeAgo(first.first_seen_at)}`;
+    : first.alertReason === 'shortlist'
+      ? `${first.contacts_count} contacted so far — you bid on this`
+      : `found ${timeAgo(first.first_seen_at)}`;
   const body = jobs.length === 1
     ? [first.budget_text, first.client_country, found].filter(Boolean).join(' · ')
     : jobs.slice(0, 3).map((j) => `• ${j.title}`).join('\n');
@@ -2578,7 +2605,30 @@ function mountBidNowFilter() {
     <button class="btn btn-primary" id="bidNowFilter" style="width:100%">
       ⚡ Bid now <span style="font-weight:400;opacity:.8">— under ${max} bids, past hour</span>
     </button>`;
+  group.insertAdjacentHTML('beforeend', `
+    <button class="btn" id="engagingFilter" style="width:100%;margin-top:6px">
+      🎯 Client is engaging <span style="font-weight:400;opacity:.8">— already contacting someone</span>
+    </button>`);
   rail.prepend(group);
+  /*
+   * The 17x signal, as a view rather than a chime: a client already working
+   * through proposals answers 5.0% of the time against 0.3% for one who has
+   * contacted nobody. Worth a list to work through, not an interruption.
+   */
+  group.querySelector('#engagingFilter').onclick = () => {
+    state.hasContacts = true;
+    state.noContacts = false;
+    state.showClosed = false;
+    state.maxBids = '';
+    state.since = '';
+    $('#hasContacts').checked = true;
+    $('#noContacts').checked = false;
+    $('#maxBids').value = '';
+    $('#since').value = '';
+    state.sort = 'reply_recent';
+    $('#sort').value = 'reply_recent';
+    reload();
+  };
   group.querySelector('#bidNowFilter').onclick = () => {
     state.maxBids = String(max);
     state.since = '1';

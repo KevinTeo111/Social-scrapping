@@ -435,14 +435,28 @@ export async function saveInsights(jobSlug, data = {}) {
     );
   }
 
+  /*
+   * Stamped when the count rises, never when it falls or holds.
+   *
+   * This is the strongest signal the board has: of the bids placed from here,
+   * those on a job whose client was already contacting somebody were answered
+   * 5.0% of the time against 0.3% where nobody had been contacted. A client
+   * who has just started is working through the pile now, and the proposal is
+   * in it -- which is worth knowing while it is true rather than afterwards.
+   */
   await run(
     `UPDATE jobs SET contacts_count = ?, pre_selected_count = ?, avg_bid_rate = COALESCE(?, avg_bid_rate),
+                     contacts_changed_at = CASE
+                       WHEN ? > COALESCE(contacts_count, 0) THEN ?
+                       ELSE contacts_changed_at END,
                      insights_fetched_at = ?
       WHERE slug = ?`,
     [
       data.contactsCount ?? proposals.filter((p) => p.inContact).length,
       data.preSelectedCount ?? proposals.filter((p) => p.preSelected).length,
       data.averageRate ?? null,
+      data.contactsCount ?? proposals.filter((p) => p.inContact).length,
+      now,
       now,
       jobSlug,
     ],

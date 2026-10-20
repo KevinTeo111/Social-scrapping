@@ -34,7 +34,7 @@ const ok = (n, c, x = '') => {
   console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${x ? '  ' + x : ''}`);
 };
 
-const { initDatabase, upsertJob } = await import('../src/db.js');
+const { initDatabase, upsertJob, saveInsights } = await import('../src/db.js');
 const { get, close } = await import('../src/sql.js');
 
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
@@ -106,11 +106,45 @@ try {
   await put('r-none', { text: null, at: null });
   ok('a job with no reply at all stays unstamped', (await stamp('r-none')) === null);
 
+  /* ---- the client starting to shortlist ---- */
+  const contacts = async (slug) => (await get('SELECT contacts_changed_at FROM jobs WHERE slug = ?', [slug])).contacts_changed_at;
+  // The count is written by the insights pass, which is where it changes.
+  const putContacts = async (slug, n) => {
+    await upsertJob({ slug, url: `https://www.workana.com/job/${slug}`, title: 'Shortlist test',
+      listedAt: new Date().toISOString() });
+    await saveInsights(slug, { contactsCount: n, proposals: [] });
+  };
+
+  await putContacts('c-job', 0);
+  ok('a job nobody has been contacted on is unstamped', (await contacts('c-job')) === null);
+  await putContacts('c-job', 1);
+  ok('the first contact is recorded', Boolean(await contacts('c-job')), 'the 17x signal');
+  const firstContact = await contacts('c-job');
+  await putContacts('c-job', 1);
+  ok('re-reading the same count does not stamp it again', (await contacts('c-job')) === firstContact);
+  await new Promise((r) => setTimeout(r, 15));
+  await putContacts('c-job', 3);
+  ok('the client contacting someone else moves it forward', (await contacts('c-job')) > firstContact);
+
+  /*
+   * A list-only walk carries no contact count at all. Reading null as "the
+   * client let everyone go" would wipe the signal on every refresh.
+   */
+  const beforeNull = await contacts('c-job');
+  await upsertJob({ slug: 'c-job', url: 'https://www.workana.com/job/c-job', title: 'Shortlist test',
+    listedAt: new Date().toISOString() });
+  ok('a list-only refresh does not disturb it', (await contacts('c-job')) === beforeNull);
+  await saveInsights('c-job', { contactsCount: 1, proposals: [] });
+  ok('...nor does the count falling back', (await contacts('c-job')) === beforeNull);
+
   /* ---- the board has to hand the field to the page ---- */
   const appSource = fs.readFileSync('src/app.js', 'utf8');
   ok('the board serves reply_changed_at to the page', appSource.includes('j.reply_changed_at'));
   const pageSource = fs.readFileSync('public/app.js', 'utf8');
   ok('...and the alert rule reads it', pageSource.includes('reply_changed_at'));
+  ok('the board serves contacts_changed_at too', appSource.includes('j.contacts_changed_at'));
+  ok('...and it is only news on a job you bid on',
+    /clientShortlisting[\s\S]{0,200}has_own_bid/.test(pageSource));
   ok('...before the bid and age tests, so an old crowded job still gets through',
     pageSource.indexOf('clientJustReplied(job, now)') < pageSource.indexOf("prefs?.mode === 'bid_now'"));
 } catch (err) {

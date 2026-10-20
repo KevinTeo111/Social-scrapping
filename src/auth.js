@@ -579,11 +579,13 @@ export function requireAdmin(req, res, next) {
  * Defaults chosen from this board's own numbers rather than taste.
  *
  * Of the bids placed from here, those on a job carrying fewer than ten
- * proposals were answered 15.4% of the time; past fifty, 1.1%. Bids pile up
- * fast -- a median of 25 by the sixth hour -- so the window worth dropping
- * everything for is roughly the first hour, while the field is still small.
+ * proposals were answered 15.4% of the time; past fifty, 1.1%. But bids arrive
+ * faster than that ideal allows: over two days only 13% of jobs were ever at
+ * or under fifteen proposals, and 25% at or under twenty-five. A ceiling of
+ * ten would be a filter onto almost nothing, so this is set where there is
+ * actually something to catch, and the member can move it.
  */
-export const ALERT_DEFAULTS = { mode: 'all', maxBids: 15, maxAgeMin: 60 };
+export const ALERT_DEFAULTS = { mode: 'all', maxBids: 25, maxAgeMin: 60 };
 
 /**
  * `mode: 'bid_now'` narrows a member's alerts to postings they could still

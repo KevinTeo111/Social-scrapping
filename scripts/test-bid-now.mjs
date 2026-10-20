@@ -66,7 +66,10 @@ try {
   /* ---- the default is unchanged for everybody ---- */
   ok('a new member is alerted about everything', auth.alertPrefs(await auth.findUser(mine.id)).mode === 'all');
   ok('...and the thresholds come from the measured numbers',
-    auth.ALERT_DEFAULTS.maxBids === 15 && auth.ALERT_DEFAULTS.maxAgeMin === 60);
+    auth.ALERT_DEFAULTS.maxBids === 25 && auth.ALERT_DEFAULTS.maxAgeMin === 60,
+    `<= ${auth.ALERT_DEFAULTS.maxBids} bids, ${auth.ALERT_DEFAULTS.maxAgeMin} min`);
+  ok('...set where there is actually something to catch (13% of jobs reach 15 bids, 25% reach 25)',
+    auth.ALERT_DEFAULTS.maxBids >= 20);
 
   await auth.setAlertPrefs(mine.id, { mode: 'bid_now', maxBids: 15, maxAgeMin: 60 });
   ok('one member can narrow their own alerts', auth.alertPrefs(await auth.findUser(mine.id)).mode === 'bid_now');
@@ -77,7 +80,7 @@ try {
   ok('an absurd bid ceiling is clamped', p.maxBids <= 500, String(p.maxBids));
   ok('...as is a negative age', p.maxAgeMin >= 5, String(p.maxAgeMin));
   p = await auth.setAlertPrefs(mine.id, { mode: 'bid_now', maxBids: 'abc', maxAgeMin: null });
-  ok('junk falls back to the defaults', p.maxBids === 15 && p.maxAgeMin === 60);
+  ok('junk falls back to the defaults', p.maxBids === 25 && p.maxAgeMin === 60, JSON.stringify(p));
 
   /* ---- the rule itself, in the browser ---- */
   const { chromium } = await import('playwright');
