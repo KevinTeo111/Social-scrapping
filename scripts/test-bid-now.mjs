@@ -148,21 +148,23 @@ try {
     /* ---- the same jobs, for a member who was never granted it ---- */
     const theirs = await signIn('everyone@local.test');
     ok('the other member is offered no settings', theirs.canTuneAlerts === false);
-    ok('...and a crowded fresh posting still reaches them',
-      (await reason({ ...fresh, bids: 60 })) === 'new');
-    ok('...as does an uncrowded one', (await reason(fresh)) === 'new');
     /*
-     * The returning-client detection is the granted account's. An ungranted
-     * member keeps exactly the reply alert they always had: the printed time,
-     * when it was precise enough to mean anything.
+     * A new posting is news for anyone watching the board, so those still
+     * reach every member. A client reply is somebody else's conversation, and
+     * reaches only the account granted it.
      */
-    ok('a returning client on an old post does NOT reach an ungranted member',
+    ok('a fresh posting still reaches them', (await reason(fresh)) === 'new');
+    ok('...crowded or not', (await reason({ ...fresh, bids: 60 })) === 'new');
+    ok('but a client replying does NOT',
+      (await reason({ published_approx_at: ago(3000), first_seen_at: ago(3000), bids: 120, last_reply_at: ago(2) })) === null);
+    ok('...nor a client returning to an old post',
       (await reason({ published_approx_at: ago(20000), first_seen_at: ago(20000), bids: 120,
                       last_reply_text: '2 weeks ago', last_reply_at: ago(20000), reply_changed_at: ago(4) })) === null);
-    ok('...while the reply alert they always had still works',
-      (await reason({ published_approx_at: ago(3000), first_seen_at: ago(3000), bids: 120, last_reply_at: ago(2) })) === 'reply');
+    ok('...nor a reply on a job they bid on themselves',
+      (await reason({ published_approx_at: ago(20000), first_seen_at: ago(20000), bids: 120,
+                      has_own_bid: 1, last_reply_at: ago(20000), reply_changed_at: ago(4) })) === null);
     const keptAll = await page.evaluate((rows) => rows.filter((r) => window.alertReason(r, Date.now())).length, sample);
-    ok('...and all 80 do, exactly as before', keptAll === 80, `${keptAll} announced`);
+    ok('...and all 80 postings do, exactly as before', keptAll === 80, `${keptAll} announced`);
 
     /* ---- a member without the grant cannot set it even by hand ---- */
     const jar = [];

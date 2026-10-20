@@ -881,10 +881,13 @@ function alertReason(job, now = Date.now()) {
    * used up.
    */
   /*
-   * Everything gated below belongs to the accounts granted it. A member who
-   * was not granted anything keeps precisely the alerts they had before: every
-   * new posting, and a client reply only when Workana happened to print one to
-   * the minute. Nobody's board changes because somebody else asked.
+   * A new posting is news for anyone watching the board, and every member who
+   * switches alerts on still gets those.
+   *
+   * Client replies are not. Knowing that a client has come back to an old
+   * project, or answered on a job you bid on, is the granted account's --
+   * nobody else is interrupted for it, because for them it is somebody else's
+   * conversation.
    */
   const granted = Boolean(me?.canTuneAlerts);
 
@@ -918,14 +921,6 @@ function alertReason(job, now = Date.now()) {
     // No publication date to judge by; when we found it is all there is.
     return 'new';
   }
-
-  /*
-   * The reply test every member has always had: the time Workana printed, and
-   * only when it was precise enough to mean anything. Knowing the moment a
-   * reply actually landed is the granted accounts' affair.
-   */
-  const replied = job.last_reply_at ? Date.parse(job.last_reply_at) : NaN;
-  if (Number.isFinite(replied) && now - replied <= ALERT_ACTIVITY_MS) return 'reply';
 
   return null;
 }

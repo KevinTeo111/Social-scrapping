@@ -73,12 +73,17 @@ try {
     ok('a fortnight-old posting found just now is NOT announced',
       (await reason(fortnight)) === null, 'this is the bug the rule exists for');
 
-    /* ---- unless the client is active on it ---- */
-    ok('...unless the client replied two minutes ago',
-      (await reason({ ...fortnight, last_reply_at: ago(2 * MIN) })) === 'reply');
-    ok('...a reply nine minutes ago still counts',
-      (await reason({ ...fortnight, last_reply_at: ago(9 * MIN) })) === 'reply');
-    ok('...but one from half an hour ago does not',
+    /*
+     * Client replies are not announced here at all. This page is signed out,
+     * which is an ungranted viewer, and a reply is somebody else's
+     * conversation: it reaches only the accounts granted it. The reply rules
+     * themselves live in test-client-returns.mjs and test-bid-now.mjs.
+     */
+    ok('a client reply does not reach an ungranted viewer',
+      (await reason({ ...fortnight, last_reply_at: ago(2 * MIN) })) === null);
+    ok('...however recent it was',
+      (await reason({ ...fortnight, last_reply_at: ago(9 * MIN) })) === null);
+    ok('...and an old one certainly does not',
       (await reason({ ...fortnight, last_reply_at: ago(30 * MIN) })) === null);
     ok('...nor one from yesterday',
       (await reason({ ...fortnight, last_reply_at: ago(24 * 60 * MIN) })) === null);
@@ -92,8 +97,8 @@ try {
       (await reason({ published_approx_at: null, first_seen_at: ago(2 * MIN) })) === 'new');
     ok('...and an old find with no posted date is not announced',
       (await reason({ published_approx_at: null, first_seen_at: ago(90 * MIN) })) === null);
-    ok('...unless its client just replied',
-      (await reason({ published_approx_at: null, first_seen_at: ago(90 * MIN), last_reply_at: ago(1 * MIN) })) === 'reply');
+    ok('...and a reply does not rescue it for an ungranted viewer',
+      (await reason({ published_approx_at: null, first_seen_at: ago(90 * MIN), last_reply_at: ago(1 * MIN) })) === null);
 
     /* ---- nothing usable at all ---- */
     ok('a row with nothing to judge by is not announced',
