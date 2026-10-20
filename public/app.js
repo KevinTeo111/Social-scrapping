@@ -821,6 +821,34 @@ const ALERT_MAX_AGE_MS = 20 * 60_000;
  */
 const ALERT_ACTIVITY_MS = 10 * 60_000;
 
+/*
+ * How recently we must have *noticed* a client reply for it to be news.
+ *
+ * Measured against reply_changed_at, our own clock, not against the time
+ * Workana prints -- that reads "2 weeks ago" or "Yesterday" on all but 59 of
+ * 999 jobs, far too coarse to tell a reply that just landed from one made
+ * hours ago. Wider than the window above because the quick check reads page
+ * one while a client reply may surface anywhere in the list, so the deep walk
+ * is often what finds it.
+ */
+const ALERT_REPLY_SEEN_MS = 25 * 60_000;
+
+/**
+ * Has the client just come back to this project?
+ *
+ * Worth interrupting someone for however old the posting is. Everyone who bid
+ * on it did so days ago and has stopped watching; the client being at the
+ * keyboard again is the opening, and it is the one kind of news that no amount
+ * of competition has already used up.
+ */
+function clientJustReplied(job, now) {
+  const noticed = job.reply_changed_at ? Date.parse(job.reply_changed_at) : NaN;
+  if (Number.isFinite(noticed) && now - noticed <= ALERT_REPLY_SEEN_MS) return true;
+  // Workana occasionally prints a minute-precise time; believe it when it does.
+  const replied = job.last_reply_at ? Date.parse(job.last_reply_at) : NaN;
+  return Number.isFinite(replied) && now - replied <= ALERT_ACTIVITY_MS;
+}
+
 /**
  * Why this job is worth interrupting someone for, or null if it is not.
  *
@@ -843,17 +871,23 @@ function alertReason(job, now = Date.now()) {
    * then means "drop what you are doing", which is worth far more than one
    * that means "something was posted".
    *
-   * A client replying on an older project still gets through: that is a
-   * different kind of news and the crowding has already happened.
    */
+
+  /*
+   * A client returning to an old project is news in either mode, and is tested
+   * before anything else: the posting's age and its bid count are exactly what
+   * make it valuable. Everyone who bid did so days ago and has stopped
+   * watching, so this is the one kind of news the competition has not already
+   * used up.
+   */
+  if (clientJustReplied(job, now)) return 'reply';
+
   const prefs = me?.alerts;
   if (prefs?.mode === 'bid_now') {
     const posted = job.published_approx_at ? Date.parse(job.published_approx_at) : Date.parse(job.first_seen_at);
     const freshEnough = Number.isFinite(posted) && now - posted <= prefs.maxAgeMin * 60_000;
     const stillOpen = !Number.isFinite(Number(job.bids)) || Number(job.bids) <= prefs.maxBids;
     if (freshEnough && stillOpen) return 'new';
-    const repliedAt = job.last_reply_at ? Date.parse(job.last_reply_at) : NaN;
-    if (Number.isFinite(repliedAt) && now - repliedAt <= ALERT_ACTIVITY_MS) return 'reply';
     return null;
   }
 
@@ -864,8 +898,6 @@ function alertReason(job, now = Date.now()) {
     // No publication date to judge by; when we found it is all there is.
     return 'new';
   }
-  const replied = job.last_reply_at ? Date.parse(job.last_reply_at) : NaN;
-  if (Number.isFinite(replied) && now - replied <= ALERT_ACTIVITY_MS) return 'reply';
   return null;
 }
 

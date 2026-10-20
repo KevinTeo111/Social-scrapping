@@ -385,6 +385,16 @@ export const LATE_COLUMNS = [
   ['scrape_runs', 'complete', `${T.int} DEFAULT 0`],
   ['scrape_runs', 'insights', `${T.int} DEFAULT 0`],
   ['scrape_runs', 'user_id', T.int],
+  /*
+   * When *we* noticed the client's reply time move forward.
+   *
+   * Workana prints that time as "2 weeks ago" or "Yesterday": of 999 jobs
+   * carrying one, only 59 were precise to the minute, so the stored instant is
+   * far too coarse to tell a reply that just landed from one made hours ago.
+   * This is our own clock, stamped the moment the value changed, which is what
+   * makes "the client has just come back to an old post" knowable at all.
+   */
+  ['jobs', 'reply_changed_at', T.text],
   ['clients', 'last_login_at', T.text],
   /*
    * Which zone rendered the "Last login" wall clock this row was read from.

@@ -268,6 +268,26 @@ export async function upsertJob(job) {
        last_seen_at       = excluded.last_seen_at,
        -- Only a list upsert carries this; a detail upsert must not refresh it.
        last_listed_at     = COALESCE(excluded.last_listed_at, jobs.last_listed_at),
+       /*
+        * Did the client just reply, or is the card simply ageing?
+        *
+        * "2 weeks ago" is re-parsed against the clock on every read, so the
+        * instant it yields creeps forward by however long it has been since we
+        * last looked -- comparing timestamps alone would call that a reply and
+        * announce every job on every walk. The text is what carries the news:
+        * it has to have *changed*, and to a more recent moment. "1 hour ago"
+        * becoming "2 hours ago" is ageing and says nothing; becoming "Just
+        * now" is the client coming back.
+        *
+        * Null on insert. Finding an old posting for the first time is not the
+        * client doing anything.
+        */
+       reply_changed_at   = CASE
+         WHEN excluded.last_reply_at IS NOT NULL
+          AND COALESCE(excluded.last_reply_text, '') <> COALESCE(jobs.last_reply_text, '')
+          AND (jobs.last_reply_at IS NULL OR excluded.last_reply_at > jobs.last_reply_at)
+         THEN excluded.last_seen_at
+         ELSE jobs.reply_changed_at END,
        is_hourly          = excluded.is_hourly,
        budget_is_max      = excluded.budget_is_max,
        -- Keep the first estimate, but backfill it if we never managed to derive one.
