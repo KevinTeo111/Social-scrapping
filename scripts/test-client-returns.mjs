@@ -142,9 +142,20 @@ try {
   ok('the board serves reply_changed_at to the page', appSource.includes('j.reply_changed_at'));
   const pageSource = fs.readFileSync('public/app.js', 'utf8');
   ok('...and the alert rule reads it', pageSource.includes('reply_changed_at'));
-  ok('the board serves contacts_changed_at too', appSource.includes('j.contacts_changed_at'));
-  ok('...and it is only news on a job you bid on',
-    /clientShortlisting[\s\S]{0,200}has_own_bid/.test(pageSource));
+  ok('the board still records when a client starts contacting people',
+    appSource.includes('j.contacts_changed_at'));
+  /*
+   * Alerts and the filter read the reply time, not the contact count: the
+   * count only arrives with an enrichment pass, a cycle behind the list, while
+   * the reply comes off the card on every walk. A weaker signal known now
+   * beats a stronger one known too late to answer.
+   */
+  ok('the alert rule reads replies, not contact counts',
+    !pageSource.includes('contacts_changed_at'));
+  ok('a reply on a job you bid on is its own kind of news',
+    /has_own_bid && clientJustReplied/.test(pageSource));
+  ok('...and is tested before a reply on any other job',
+    pageSource.indexOf("'reply-yours'") < pageSource.indexOf("clientJustReplied(job, now)) return 'reply'"));
   ok('...before the bid and age tests, so an old crowded job still gets through',
     pageSource.indexOf('clientJustReplied(job, now)') < pageSource.indexOf("prefs?.mode === 'bid_now'"));
 } catch (err) {

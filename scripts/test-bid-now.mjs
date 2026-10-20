@@ -128,6 +128,10 @@ try {
       (await reason({ ...fresh, bids: null })) === 'new');
     ok('a client replying on an old crowded job still gets through',
       (await reason({ published_approx_at: ago(3000), first_seen_at: ago(3000), bids: 120, last_reply_at: ago(2) })) === 'reply');
+    ok('a reply on a job this member bid on is its own, sharper news',
+      (await reason({ published_approx_at: ago(20000), first_seen_at: ago(20000), bids: 120,
+                      has_own_bid: 1, last_reply_text: '2 weeks ago', last_reply_at: ago(20000),
+                      reply_changed_at: ago(4) })) === 'reply-yours');
     ok('...and so does one we only know came back because we watched it change',
       (await reason({ published_approx_at: ago(20000), first_seen_at: ago(20000), bids: 120,
                       last_reply_text: '2 weeks ago', last_reply_at: ago(20000), reply_changed_at: ago(4) })) === 'reply',
