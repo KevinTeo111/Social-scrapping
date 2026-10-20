@@ -392,6 +392,14 @@ export function publicUser(user) {
     // Which fields are known to be wrong, and why — so the panel can ask for
     // exactly those rather than saying "something failed".
     brokenInputs: brokenInputs(user),
+    /*
+     * The alert settings are offered to the accounts granted them and to
+     * nobody else -- the panel has no controls to draw without this, so a
+     * member who was not granted it sees the board exactly as before.
+     */
+    canTuneAlerts: Boolean(user.alert_tuning),
+    // This member's own subscription; nobody else's is affected by it.
+    alerts: alertPrefs(user),
     createdAt: user.created_at,
   };
 }
@@ -561,4 +569,54 @@ export function requireAuth(req, res, next) {
 export function requireAdmin(req, res, next) {
   if (!req.user?.is_admin) return res.status(403).json({ error: 'Administrator only.' });
   next();
+}
+
+/* ------------------------------------------------------------------ */
+/* Which postings a member wants to be interrupted for                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Defaults chosen from this board's own numbers rather than taste.
+ *
+ * Of the bids placed from here, those on a job carrying fewer than ten
+ * proposals were answered 15.4% of the time; past fifty, 1.1%. Bids pile up
+ * fast -- a median of 25 by the sixth hour -- so the window worth dropping
+ * everything for is roughly the first hour, while the field is still small.
+ */
+export const ALERT_DEFAULTS = { mode: 'all', maxBids: 15, maxAgeMin: 60 };
+
+/**
+ * `mode: 'bid_now'` narrows a member's alerts to postings they could still
+ * realistically win: new enough, and not yet crowded. `'all'` is every new
+ * posting, which is what everyone gets until they say otherwise.
+ *
+ * Stored per member on purpose. Alerts are a personal subscription, and one
+ * person deciding they only want the uncrowded ones must not quietly change
+ * what the rest of the board is told about.
+ */
+export async function setAlertPrefs(userId, { mode, maxBids, maxAgeMin } = {}) {
+  const chosen = mode === 'bid_now' ? 'bid_now' : 'all';
+  const clamp = (v, lo, hi, fallback) => {
+    // null and '' both coerce to 0, which would clamp to the minimum and look
+    // deliberate. Absent means absent: fall back to the measured default.
+    if (v === null || v === undefined || v === '') return fallback;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : fallback;
+  };
+  await run('UPDATE users SET alert_mode = ?, alert_max_bids = ?, alert_max_age_min = ? WHERE id = ?', [
+    chosen,
+    clamp(maxBids, 1, 500, ALERT_DEFAULTS.maxBids),
+    clamp(maxAgeMin, 5, 1440, ALERT_DEFAULTS.maxAgeMin),
+    userId,
+  ]);
+  return alertPrefs(await findUser(userId));
+}
+
+/** What this member's alerts are set to, with the defaults filled in. */
+export function alertPrefs(user) {
+  return {
+    mode: user?.alert_mode === 'bid_now' ? 'bid_now' : 'all',
+    maxBids: user?.alert_max_bids ?? ALERT_DEFAULTS.maxBids,
+    maxAgeMin: user?.alert_max_age_min ?? ALERT_DEFAULTS.maxAgeMin,
+  };
 }

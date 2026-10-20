@@ -41,6 +41,7 @@ import {
   clearWorkanaCookies,
   setWorkanaProxy,
   setScrapeLocale,
+  setAlertPrefs,
   proxyBlocker,
   scrapeBlocker,
   setupBlocker,
@@ -317,6 +318,31 @@ app.post('/api/session/proxy', requireAuth, async (req, res) => {
  * over should not override the person sitting behind it. Empty values hand it
  * back to detection.
  */
+/**
+ * Which postings this member wants to be interrupted for.
+ *
+ * Per member, and off by default. One person narrowing their alerts to the
+ * uncrowded jobs must not change what anybody else is told about, which is why
+ * this is a row on their account rather than a setting on the board.
+ */
+app.post('/api/me/alerts', requireAuth, async (req, res) => {
+  // The panel only draws these controls for a granted account; this is what
+  // makes that true rather than merely apparent.
+  if (!req.user.alert_tuning) {
+    return res.status(403).json({ error: 'Alert settings are not enabled for this account.' });
+  }
+  try {
+    const alerts = await setAlertPrefs(req.user.id, {
+      mode: req.body?.mode,
+      maxBids: req.body?.maxBids,
+      maxAgeMin: req.body?.maxAgeMin,
+    });
+    res.json({ ok: true, alerts });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
 app.post('/api/session/locale', requireAuth, async (req, res) => {
   const timezone = String(req.body?.timezone || '').trim();
   const locale = String(req.body?.locale || '').trim();

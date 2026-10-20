@@ -430,4 +430,19 @@ export const LATE_COLUMNS = [
   ['users', 'scrape_locale', T.text],
   // 'probe' (read off the proxy's exit) or 'member' (typed, and never overwritten).
   ['users', 'scrape_locale_by', T.text],
+  /*
+   * Which postings this member wants to be interrupted for. Per member and off
+   * by default: one person narrowing their own alerts must not change what
+   * anybody else is told about. See alertReason() in public/app.js.
+   */
+  /*
+   * Whether this member is offered the alert settings at all. Granted per
+   * account rather than shown to everyone and defaulted off: the board is
+   * shared, and a control nobody else asked for is clutter on their screen
+   * and a support question waiting to happen.
+   */
+  ['users', 'alert_tuning', `${T.int} DEFAULT 0`],
+  ['users', 'alert_mode', T.text],
+  ['users', 'alert_max_bids', T.int],
+  ['users', 'alert_max_age_min', T.int],
 ];
