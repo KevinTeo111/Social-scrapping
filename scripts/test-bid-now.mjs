@@ -148,6 +148,38 @@ try {
     /* ---- the same jobs, for a member who was never granted it ---- */
     const theirs = await signIn('everyone@local.test');
     ok('the other member is offered no settings', theirs.canTuneAlerts === false);
+    /* ---- a notice each time a run ends, for the granted account ---- */
+    const notice = (run, opts) => page.evaluate(([r, o]) => window.runNotice(r, o), [run, opts]);
+    const ended = {
+      started_at: ago(8), finished_at: ago(0.5), // ago() takes minutes
+      pages: 37, seen: 742, inserted: 3, details: 0, insights: 0, complete: 1, error: null,
+    };
+    const granted = { granted: true, on: true };
+
+    let n = await notice(ended, granted);
+    ok('a finished deep walk is announced', n?.title === 'Deep walk finished', JSON.stringify(n));
+    ok('...with what it actually did', /37 pages/.test(n.body) && /742 jobs/.test(n.body) && /3 new/.test(n.body), n.body);
+    ok('...how long it took, in minutes that mean something',
+      n.body.includes('7.5 min'), n.body);
+    ok('...and that it reached the end, which is what lets closed jobs go', /walked to the end/.test(n.body));
+
+    n = await notice({ ...ended, pages: 1, seen: 22, inserted: 1, complete: 0 }, granted);
+    ok('a quick check is named as one', n?.title === 'Quick check finished', JSON.stringify(n));
+    n = await notice({ ...ended, pages: 0, seen: 0, inserted: 0, details: 12, complete: 0 }, granted);
+    ok('so is an enrichment pass', n?.title === 'Enrichment finished', JSON.stringify(n));
+    ok('...reporting the job pages it opened', /12 detail/.test(n.body), n.body);
+
+    n = await notice({ ...ended, error: 'Cloudflare challenge on page 13 (stopped early, kept 262 jobs)' }, granted);
+    ok('a run that stopped early says so', n?.title === 'Deep walk stopped', JSON.stringify(n));
+    ok('...and says why', /Cloudflare challenge on page 13/.test(n.body), n.body);
+
+    ok('a run still going is not announced',
+      (await notice({ ...ended, finished_at: null }, granted)) === null);
+    ok('nothing is announced with alerts switched off',
+      (await notice(ended, { granted: true, on: false })) === null);
+    ok('...nor to an account that was not granted them',
+      (await notice(ended, { granted: false, on: true })) === null);
+
     /*
      * A new posting is news for anyone watching the board, so those still
      * reach every member. A client reply is somebody else's conversation, and

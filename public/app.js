@@ -1024,6 +1024,55 @@ function announce(jobs) {
  * at the time. Tying alerts to them meant a filter left over from an hour ago
  * silently decided what you were told about.
  */
+/**
+ * What to say about a run that has just ended, or null if nothing should be said.
+ *
+ * Pure, so the decision can be tested without a browser notification being
+ * raised. Granted accounts only: on a shared board, how the scraper is getting
+ * on is the business of whoever is watching it, not of every member.
+ */
+function runNotice(run, { granted = Boolean(me?.canTuneAlerts), on = alertsOn } = {}) {
+  if (!granted || !on || !run || !run.finished_at) return null;
+  const pages = Number(run.pages) || 0;
+  const kind = pages === 0 ? 'Enrichment' : pages <= 2 ? 'Quick check' : 'Deep walk';
+  if (run.error) return { title: `${kind} stopped`, body: String(run.error).slice(0, 160) };
+
+  const bits = [];
+  if (pages) bits.push(`${pages} page${pages === 1 ? '' : 's'}`);
+  if (run.seen) bits.push(`${run.seen} job${run.seen === 1 ? '' : 's'}`);
+  bits.push(`${Number(run.inserted) || 0} new`);
+  if (run.details) bits.push(`${run.details} detail`);
+  if (run.insights) bits.push(`${run.insights} contacts`);
+  const started = Date.parse(run.started_at);
+  const ended = Date.parse(run.finished_at);
+  if (Number.isFinite(started) && Number.isFinite(ended) && ended > started) {
+    bits.push(`${((ended - started) / 60_000).toFixed(1)} min`);
+  }
+  if (run.complete) bits.push('walked to the end');
+  return { title: `${kind} finished`, body: bits.join(' · ') };
+}
+
+/**
+ * Shows it.
+ *
+ * Silent and under one tag, because runs finish every couple of minutes: a
+ * sound each time would be unbearable and a stack of them unreadable, so each
+ * notice quietly replaces the last and clears itself. The chime stays what it
+ * has always been -- a posting or a client worth looking at now.
+ */
+function announceRun(run) {
+  const notice = runNotice(run);
+  if (!notice) return;
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const n = new Notification(notice.title, {
+    body: notice.body,
+    tag: 'workana-run',
+    renotify: false,
+    silent: true,
+  });
+  setTimeout(() => n.close(), 20_000);
+}
+
 async function checkNewJobs() {
   if (!alertsOn || !alertCursor) return;
   const p = new URLSearchParams();
@@ -1927,6 +1976,7 @@ async function pollStatus() {
       load();
       if (s.lastRun.inserted > 0) loadFacets();
       checkNewJobs();
+      announceRun(s.lastRun);
     }
     pollStatus.finished = finished;
   } catch { /* server restarting */ }
